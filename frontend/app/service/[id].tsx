@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import {
   View,
   Text,
@@ -14,7 +14,7 @@ import Animated, { FadeInDown } from "react-native-reanimated";
 import { servicesApi, type ServiceItem } from "../../src/services/api/servicesApi";
 import { reviewsApi, type ReviewItem } from "../../src/services/api/reviewsApi";
 import ReviewList from "../../src/components/ReviewList";
-import FeedbackModal, { type FeedbackType } from "../../src/components/FeedbackModal";
+import { getApiErrorMessage } from "../../src/services/api/client";
 import { trackServiceView } from "../../src/utils/activityHistory";
 import { getAuth } from "../../src/auth/auth";
 import {
@@ -35,39 +35,45 @@ export default function ServiceDetailScreen() {
   const [service, setService] = useState<ServiceItem | null>(null);
   const [reviews, setReviews] = useState<ReviewItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [reviewsError, setReviewsError] = useState("");
   const [providerOwnsService, setProviderOwnsService] = useState(false);
-  const [popup, setPopup] = useState({
-    visible: false,
-    type: "error" as FeedbackType,
-    title: "",
-    message: "",
-  });
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError("");
+    setReviewsError("");
+    if (!Number.isInteger(Number(id)) || Number(id) <= 0) {
+      setService(null);
+      setError("This service link is invalid.");
+      setLoading(false);
+      return;
+    }
+    try {
+      const item = await servicesApi.get(Number(id));
+      setService(item);
+      trackServiceView({
+        id: item.id,
+        title: item.title,
+        provider_name: item.provider_name,
+      });
+      try {
+        setReviews(await reviewsApi.byProvider(item.provider));
+      } catch (reviewError) {
+        setReviews([]);
+        setReviewsError(getApiErrorMessage(reviewError, "Could not load reviews."));
+      }
+    } catch (loadError) {
+      setService(null);
+      setError(getApiErrorMessage(loadError, "Could not load this service."));
+    } finally {
+      setLoading(false);
+    }
+  }, [id]);
 
   useEffect(() => {
-    const load = async () => {
-      try {
-        const s = await servicesApi.get(Number(id));
-        setService(s);
-        trackServiceView({
-          id: s.id,
-          title: s.title,
-          provider_name: s.provider_name,
-        });
-        const r = await reviewsApi.byProvider(s.provider);
-        setReviews(r);
-      } catch {
-        setPopup({
-          visible: true,
-          type: "error",
-          title: "Error",
-          message: "Could not load service.",
-        });
-      } finally {
-        setLoading(false);
-      }
-    };
-    if (id) load();
-  }, [id]);
+    if (id) void load();
+  }, [id, load]);
 
   useEffect(() => {
     if (!service) return;
@@ -92,10 +98,11 @@ export default function ServiceDetailScreen() {
   if (!service) {
     return (
       <View style={styles.center}>
-        <Text style={styles.notFoundTitle}>Service not found</Text>
-        <Text style={styles.notFoundText}>This listing may have been removed.</Text>
-        <TouchableOpacity style={styles.bookBtn} onPress={() => router.replace("/")}>
-          <Text style={styles.bookText}>Back to home</Text>
+        <Text style={styles.notFoundTitle}>{error ? "Could not load service" : "Service not found"}</Text>
+        <Text style={styles.notFoundText}>{error || "This listing may have been removed."}</Text>
+        {error ? <TouchableOpacity style={styles.bookBtn} onPress={() => void load()}><Text style={styles.bookText}>Try again</Text></TouchableOpacity> : null}
+        <TouchableOpacity style={styles.bookBtn} onPress={() => router.replace("/home")}>
+          <Text style={styles.bookText}>Back to services</Text>
         </TouchableOpacity>
       </View>
     );
@@ -150,7 +157,7 @@ export default function ServiceDetailScreen() {
           <Text style={styles.loc}>📍 {service.location}</Text>
 
           <Text style={styles.section}>Reviews & comments</Text>
-          <ReviewList reviews={reviews} />
+          {reviewsError ? <View><Text style={styles.notFoundText}>{reviewsError}</Text><TouchableOpacity onPress={() => void load()}><Text style={styles.bookText}>Retry reviews</Text></TouchableOpacity></View> : <ReviewList reviews={reviews} />}
         </Animated.View>
       </ScrollView>
 
@@ -167,6 +174,7 @@ export default function ServiceDetailScreen() {
                   price: service.price,
                   provider: service.provider_name,
                   providerId: String(service.provider),
+                  mode: service.service_mode || "BOTH",
                 },
               })
             }
@@ -176,13 +184,6 @@ export default function ServiceDetailScreen() {
         ) : null}
       </View>
 
-      <FeedbackModal
-        visible={popup.visible}
-        type={popup.type}
-        title={popup.title}
-        message={popup.message}
-        onClose={() => setPopup((p) => ({ ...p, visible: false }))}
-      />
     </View>
   );
 }

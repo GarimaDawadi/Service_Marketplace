@@ -6,7 +6,10 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 
 load_dotenv(BASE_DIR / ".env")
 
-SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", "dev-insecure-change-me")
+SECRET_KEY = os.getenv(
+    "DJANGO_SECRET_KEY",
+    "development-only-change-this-known-secret-before-production-please",
+)
 
 DEBUG = os.getenv("DJANGO_DEBUG", "true").lower() == "true"
 
@@ -39,6 +42,7 @@ INSTALLED_APPS = [
     "chats",
     "payments",
     "reviews",
+    "notifications.apps.NotificationsConfig",
     "platformcore",
 ]
 
@@ -150,7 +154,7 @@ CORS_ALLOW_CREDENTIALS = True
 
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": (
-        "rest_framework_simplejwt.authentication.JWTAuthentication",
+        "accounts.authentication.AccountJWTAuthentication",
     ),
 
     "DEFAULT_PERMISSION_CLASSES": (
@@ -168,6 +172,17 @@ REST_FRAMEWORK = {
     ),
 
     "PAGE_SIZE": 20,
+    "DEFAULT_THROTTLE_RATES": {
+        "register": "5/hour",
+        "login": "10/minute",
+        "otp_resend": "5/hour",
+        "otp_verify": "10/minute",
+        "password_reset": "5/hour",
+        "password_reset_confirm": "10/hour",
+        "payment_callback": "30/minute",
+        "payment_return": "30/minute",
+        "payment_checkout": "30/minute",
+    },
 }
 
 
@@ -244,15 +259,9 @@ ESEWA_SECRET_KEY = os.getenv(
     "8gBm/:&EnhH.1/q"
 )
 
-ESEWA_SUCCESS_URL = os.getenv(
-    "ESEWA_SUCCESS_URL",
-    "http://localhost:5173/payments/esewa/success"
-)
+ESEWA_SUCCESS_URL = os.getenv("ESEWA_SUCCESS_URL", "")
 
-ESEWA_FAILURE_URL = os.getenv(
-    "ESEWA_FAILURE_URL",
-    "http://localhost:5173/payments/esewa/failure"
-)
+ESEWA_FAILURE_URL = os.getenv("ESEWA_FAILURE_URL", "")
 
 ESEWA_FORM_URL = os.getenv(
     "ESEWA_FORM_URL",
@@ -264,7 +273,5 @@ ESEWA_STATUS_URL = os.getenv(
     "https://rc.esewa.com.np/api/epay/transaction/status/"
 )
 
-ESEWA_TRUST_SANDBOX_SUCCESS = os.getenv(
-    "ESEWA_TRUST_SANDBOX_SUCCESS",
-    "true"
-).lower() == "true"
+# Payment success is always verified server-to-server; client flags cannot
+# simulate a successful transaction.

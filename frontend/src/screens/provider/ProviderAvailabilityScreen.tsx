@@ -1,262 +1,189 @@
-import React, { useEffect, useState, useMemo, useCallback } from "react";
-import {
-  Text,
-  TouchableOpacity,
-  StyleSheet,
-  ActivityIndicator,
-  View,
-} from "react-native";
+import React, { useCallback, useEffect, useState } from "react";
+import { ActivityIndicator, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
 import { useRouter } from "expo-router";
-import Animated, { FadeInDown } from "react-native-reanimated";
 import ScreenShell from "../../components/ScreenShell";
-import BookingCalendar from "../../components/BookingCalendar";
 import FeedbackModal, { type FeedbackType } from "../../components/FeedbackModal";
-import { bookingsApi, type AvailabilitySlot } from "../../services/api/bookingsApi";
-import { servicesApi, type ServiceItem } from "../../services/api/servicesApi";
 import { getApiErrorMessage } from "../../services/api/client";
+import { servicesApi, type ProviderAvailability } from "../../services/api/servicesApi";
 import { getAuth } from "../../auth/auth";
-import { logout } from "../../auth/auth";
 import { TIME_PRESETS } from "../../utils/bookingHelpers";
-import { PRIMARY, CARD, TEXT, TEXT_MUTED, BORDER, TAG_BG } from "../../theme/colors";
-import axios from "axios";
+import { BORDER, CARD, PRIMARY, TAG_BG, TEXT, TEXT_MUTED } from "../../theme/colors";
+
+const WEEKDAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
 
 export default function ProviderAvailabilityScreen() {
   const router = useRouter();
-  const [month, setMonth] = useState(new Date());
-  const [slots, setSlots] = useState<AvailabilitySlot[]>([]);
-  const [myServices, setMyServices] = useState<ServiceItem[]>([]);
-  const [selectedServiceId, setSelectedServiceId] = useState<number | null>(null);
+  const [entries, setEntries] = useState<ProviderAvailability[]>([]);
   const [loading, setLoading] = useState(true);
-  const [adding, setAdding] = useState(false);
-  const [selectedDate, setSelectedDate] = useState<string | null>(null);
-  const [selectedPreset, setSelectedPreset] = useState(TIME_PRESETS[0]);
-  const [popup, setPopup] = useState({
-    visible: false,
-    type: "info" as FeedbackType,
-    title: "",
-    message: "",
+  const [loadError, setLoadError] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [mode, setMode] = useState<"weekly" | "date">("weekly");
+  const [weekday, setWeekday] = useState(0);
+  const [date, setDate] = useState("");
+  const [presetIndex, setPresetIndex] = useState(0);
+  const [note, setNote] = useState("");
+  const [popup, setPopup] = useState<{ visible: boolean; type: FeedbackType; title: string; message: string }>({
+    visible: false, type: "info", title: "", message: "",
   });
 
-  const monthKey = useMemo(
-    () => `${month.getFullYear()}-${String(month.getMonth() + 1).padStart(2, "0")}`,
-    [month]
-  );
-
   const load = useCallback(async () => {
-    const auth = await getAuth();
-    if (!auth.token) {
-      router.replace("/login");
-      return;
-    }
     setLoading(true);
+    setLoadError("");
     try {
-      const allServices = await servicesApi.list();
-      const mine = allServices.filter((s) => s.provider_name === auth.username);
-      setMyServices(mine);
-      if (mine.length && !selectedServiceId) {
-        setSelectedServiceId(mine[0].id);
-      }
-      const svcId = selectedServiceId ?? mine[0]?.id;
-      const data = await bookingsApi.listAvailability({
-        month: monthKey,
-        ...(svcId ? { service: svcId } : {}),
-      });
-      setSlots(data);
-    } catch (err) {
-      if (axios.isAxiosError(err) && err.response?.status === 401) {
-        await logout();
+      const auth = await getAuth();
+      if (!auth.token) {
         router.replace("/login");
-        return;
+        return false;
       }
-      setSlots([]);
+      const data = await servicesApi.listAvailability();
+      setEntries(data);
+      return true;
+    } catch (error) {
+      setLoadError(getApiErrorMessage(error, "Could not load availability."));
+      return false;
     } finally {
       setLoading(false);
     }
-  }, [monthKey, router, selectedServiceId]);
+  }, [router]);
 
-  useEffect(() => {
-    load();
-  }, [load]);
+  useEffect(() => { void load(); }, [load]);
 
-  const showPopup = (type: FeedbackType, title: string, message: string) =>
-    setPopup({ visible: true, type, title, message });
-
-  const onToggle = async (slot: AvailabilitySlot) => {
-    if (slot.status === "booked") {
-      showPopup(
-        "info",
-        "Booked slot",
-        "Cancel the booking from View bookings (24+ hrs before) to release this time."
-      );
+  const add = async () => {
+    if (mode === "date" && !/^\d{4}-\d{2}-\d{2}$/.test(date.trim())) {
+      setPopup({ visible: true, type: "error", title: "Date required", message: "Enter a date in YYYY-MM-DD format." });
       return;
     }
+    const selected = TIME_PRESETS[presetIndex];
+    setSaving(true);
     try {
-      await bookingsApi.toggleBlock(slot.id);
-      await load();
-      showPopup("success", "Updated", "Slot status updated.");
-    } catch (err) {
-      showPopup("error", "Failed", getApiErrorMessage(err, "Could not update."));
+      await servicesApi.createAvailability({
+        weekday: mode === "weekly" ? weekday : null,
+        specific_date: mode === "date" ? date.trim() : null,
+        start_time: selected.start,
+        end_time: selected.end,
+        is_blocked: false,
+        note: note.trim(),
+      });
+      setNote("");
+      const refreshed = await load();
+      setPopup({ visible: true, type: "success", title: "Availability added", message: refreshed ? "Customers can now request appointments during this time." : "The time was saved, but the schedule could not be refreshed. Use Retry to reload it." });
+    } catch (error) {
+      setPopup({ visible: true, type: "error", title: "Could not add availability", message: getApiErrorMessage(error, "Check that the times do not overlap and try again.") });
+    } finally {
+      setSaving(false);
     }
   };
 
-  const addTimeSlot = async () => {
-    if (!selectedDate) {
-      showPopup("info", "Select a date", "Tap a day on the calendar first.");
-      return;
-    }
-    const serviceId = selectedServiceId ?? myServices[0]?.id;
-    if (!serviceId) {
-      showPopup("info", "No service", "Publish a service before adding availability.");
-      router.push("/provider-services");
-      return;
-    }
-    setAdding(true);
+  const toggleBlocked = async (entry: ProviderAvailability) => {
     try {
-      await bookingsApi.createAvailability({
-        service: serviceId,
-        date: selectedDate,
-        start_time: selectedPreset.start,
-        end_time: selectedPreset.end,
-      });
+      await servicesApi.updateAvailability(entry.id, { is_blocked: !entry.is_blocked });
       await load();
-      showPopup(
-        "success",
-        "Slot added",
-        `${selectedDate} ${selectedPreset.label} is now available. Add more times on the same day if needed.`
-      );
-    } catch (err) {
-      showPopup("error", "Failed", getApiErrorMessage(err, "Could not add slot. Times may overlap."));
-    } finally {
-      setAdding(false);
+    } catch (error) {
+      setPopup({ visible: true, type: "error", title: "Update failed", message: getApiErrorMessage(error, "Could not update this time." ) });
+    }
+  };
+
+  const remove = async (entry: ProviderAvailability) => {
+    try {
+      await servicesApi.deleteAvailability(entry.id);
+      await load();
+    } catch (error) {
+      setPopup({ visible: true, type: "error", title: "Remove failed", message: getApiErrorMessage(error, "Could not remove this time." ) });
     }
   };
 
   return (
-    <ScreenShell
-      showBack
-      step="Provider calendar"
-      title="Manage availability"
-      subtitle="Add multiple time slots per day. Booked slots turn gray. Overlapping times are blocked automatically."
-    >
-      <Animated.View entering={FadeInDown.duration(400)}>
-        {myServices.length > 1 ? (
-          <View style={styles.serviceRow}>
-            <Text style={styles.label}>Service</Text>
-            <View style={styles.chips}>
-              {myServices.map((s) => (
-                <TouchableOpacity
-                  key={s.id}
-                  style={[styles.chip, selectedServiceId === s.id && styles.chipActive]}
-                  onPress={() => setSelectedServiceId(s.id)}
-                >
-                  <Text
-                    style={[
-                      styles.chipText,
-                      selectedServiceId === s.id && styles.chipTextActive,
-                    ]}
-                    numberOfLines={1}
-                  >
-                    {s.title}
-                  </Text>
+    <ScreenShell step="Provider calendar" title="Manage availability" subtitle="Add weekly hours or a one-time date. Customers can only request local appointments within your published hours.">
+      <View style={styles.card}>
+        <Text style={styles.label}>Schedule type</Text>
+        <View style={styles.row}>
+          {(["weekly", "date"] as const).map((value) => (
+            <TouchableOpacity key={value} style={[styles.chip, mode === value && styles.activeChip]} onPress={() => setMode(value)}>
+              <Text style={[styles.chipText, mode === value && styles.activeChipText]}>{value === "weekly" ? "Repeats weekly" : "Specific date"}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+        {mode === "weekly" ? (
+          <>
+            <Text style={styles.label}>Day of week</Text>
+            <View style={styles.row}>
+              {WEEKDAYS.map((day, index) => (
+                <TouchableOpacity key={day} style={[styles.chip, weekday === index && styles.activeChip]} onPress={() => setWeekday(index)}>
+                  <Text style={[styles.chipText, weekday === index && styles.activeChipText]}>{day.slice(0, 3)}</Text>
                 </TouchableOpacity>
               ))}
             </View>
-          </View>
-        ) : null}
-
-        {loading ? (
-          <ActivityIndicator color={PRIMARY} style={{ marginTop: 24 }} />
+          </>
         ) : (
-          <BookingCalendar
-            month={month}
-            slots={slots}
-            selectedDate={selectedDate}
-            onSelectDate={setSelectedDate}
-            onChangeMonth={(d) => setMonth(new Date(month.getFullYear(), month.getMonth() + d, 1))}
-            onToggleSlot={onToggle}
-          />
+          <>
+            <Text style={styles.label}>Date (YYYY-MM-DD)</Text>
+            <TextInput value={date} onChangeText={setDate} placeholder="2026-10-05" autoCapitalize="none" style={styles.input} />
+          </>
         )}
-
-        {selectedDate ? (
-          <View style={styles.presetBox}>
-            <Text style={styles.label}>Time slot for {selectedDate}</Text>
-            <View style={styles.chips}>
-              {TIME_PRESETS.map((p) => (
-                <TouchableOpacity
-                  key={p.label}
-                  style={[styles.chip, selectedPreset.label === p.label && styles.chipActive]}
-                  onPress={() => setSelectedPreset(p)}
-                >
-                  <Text
-                    style={[
-                      styles.chipText,
-                      selectedPreset.label === p.label && styles.chipTextActive,
-                    ]}
-                  >
-                    {p.label}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-          </View>
-        ) : null}
-
-        <TouchableOpacity
-          style={[styles.addBtn, adding && { opacity: 0.6 }]}
-          onPress={addTimeSlot}
-          disabled={adding}
-        >
-          {adding ? (
-            <ActivityIndicator color={PRIMARY} />
-          ) : (
-            <Text style={styles.addText}>+ Add time slot on selected day</Text>
-          )}
+        <Text style={styles.label}>Available hours</Text>
+        <View style={styles.row}>
+          {TIME_PRESETS.map((preset, index) => (
+            <TouchableOpacity key={preset.label} style={[styles.chip, presetIndex === index && styles.activeChip]} onPress={() => setPresetIndex(index)}>
+              <Text style={[styles.chipText, presetIndex === index && styles.activeChipText]}>{preset.label}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+        <Text style={styles.label}>Note (optional)</Text>
+        <TextInput value={note} onChangeText={setNote} placeholder="Anything customers should know" style={styles.input} />
+        <TouchableOpacity style={[styles.primaryButton, saving && styles.disabled]} disabled={saving} onPress={add}>
+          {saving ? <ActivityIndicator color="#fff" /> : <Text style={styles.primaryButtonText}>Add availability</Text>}
         </TouchableOpacity>
-      </Animated.View>
+      </View>
 
-      <FeedbackModal
-        visible={popup.visible}
-        type={popup.type}
-        title={popup.title}
-        message={popup.message}
-        onClose={() => setPopup((p) => ({ ...p, visible: false }))}
-      />
+      <Text style={styles.sectionTitle}>Your schedule</Text>
+      {loading ? <ActivityIndicator color={PRIMARY} style={{ marginVertical: 24 }} /> : loadError ? (
+        <View style={styles.empty}><Text style={styles.errorText}>{loadError}</Text><TouchableOpacity onPress={() => void load()}><Text style={styles.retryText}>Retry</Text></TouchableOpacity></View>
+      ) : entries.length === 0 ? (
+        <View style={styles.empty}><Text style={styles.emptyText}>No availability set yet. Add weekly hours or a specific date above.</Text></View>
+      ) : entries.map((entry) => (
+        <View key={entry.id} style={styles.entry}>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.entryTitle}>{entry.specific_date || WEEKDAYS[entry.weekday ?? 0]}</Text>
+            <Text style={styles.entryMeta}>{entry.start_time.slice(0, 5)}–{entry.end_time.slice(0, 5)}{entry.note ? ` · ${entry.note}` : ""}</Text>
+            <Text style={[styles.entryStatus, entry.is_blocked && styles.blocked]}>{entry.is_blocked ? "Blocked" : "Available"}</Text>
+          </View>
+          <TouchableOpacity onPress={() => void toggleBlocked(entry)} style={styles.smallAction}>
+            <Text style={styles.smallActionText}>{entry.is_blocked ? "Unblock" : "Block"}</Text>
+          </TouchableOpacity>
+          <TouchableOpacity onPress={() => void remove(entry)} style={styles.removeAction}>
+            <Text style={styles.removeText}>Remove</Text>
+          </TouchableOpacity>
+        </View>
+      ))}
+      <FeedbackModal visible={popup.visible} type={popup.type} title={popup.title} message={popup.message} onClose={() => setPopup((current) => ({ ...current, visible: false }))} />
     </ScreenShell>
   );
 }
 
 const styles = StyleSheet.create({
-  serviceRow: { marginBottom: 16 },
-  label: { fontSize: 13, fontWeight: "700", color: TEXT, marginBottom: 8 },
-  presetBox: {
-    marginTop: 16,
-    padding: 14,
-    backgroundColor: CARD,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: BORDER,
-  },
-  chips: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
-  chip: {
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: BORDER,
-    backgroundColor: TAG_BG,
-    maxWidth: "48%",
-  },
-  chipActive: { backgroundColor: PRIMARY, borderColor: PRIMARY },
-  chipText: { fontSize: 13, fontWeight: "600", color: TEXT },
-  chipTextActive: { color: "#fff" },
-  addBtn: {
-    marginTop: 16,
-    padding: 14,
-    borderWidth: 1,
-    borderColor: PRIMARY,
-    borderRadius: 8,
-    alignItems: "center",
-    backgroundColor: CARD,
-  },
-  addText: { color: PRIMARY, fontWeight: "700" },
+  card: { padding: 16, borderRadius: 12, backgroundColor: CARD, borderColor: BORDER, borderWidth: 1, marginBottom: 24 },
+  label: { color: TEXT, fontWeight: "700", fontSize: 13, marginBottom: 8, marginTop: 8 },
+  row: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: 10 },
+  chip: { borderRadius: 8, borderWidth: 1, borderColor: BORDER, backgroundColor: TAG_BG, paddingHorizontal: 11, paddingVertical: 9 },
+  activeChip: { borderColor: PRIMARY, backgroundColor: PRIMARY },
+  chipText: { color: TEXT, fontWeight: "600", fontSize: 12 },
+  activeChipText: { color: "#fff" },
+  input: { borderWidth: 1, borderColor: BORDER, borderRadius: 8, backgroundColor: TAG_BG, color: TEXT, padding: 12, marginBottom: 8 },
+  primaryButton: { backgroundColor: PRIMARY, padding: 14, borderRadius: 8, alignItems: "center", marginTop: 6 },
+  primaryButtonText: { color: "#fff", fontWeight: "700" },
+  disabled: { opacity: 0.6 },
+  sectionTitle: { fontSize: 17, fontWeight: "800", color: TEXT, marginBottom: 10 },
+  empty: { padding: 18, borderRadius: 10, backgroundColor: CARD, borderWidth: 1, borderColor: BORDER },
+  emptyText: { color: TEXT_MUTED, lineHeight: 21 },
+  errorText: { color: "#B91C1C", lineHeight: 21, marginBottom: 8 },
+  retryText: { color: PRIMARY, fontWeight: "800" },
+  entry: { flexDirection: "row", alignItems: "center", gap: 8, borderWidth: 1, borderColor: BORDER, backgroundColor: CARD, borderRadius: 10, padding: 13, marginBottom: 9 },
+  entryTitle: { color: TEXT, fontWeight: "700" },
+  entryMeta: { color: TEXT_MUTED, marginTop: 4, fontSize: 12 },
+  entryStatus: { color: "#15803D", fontWeight: "700", fontSize: 11, marginTop: 4 },
+  blocked: { color: "#B91C1C" },
+  smallAction: { padding: 7 },
+  smallActionText: { color: PRIMARY, fontWeight: "700", fontSize: 12 },
+  removeAction: { padding: 7 },
+  removeText: { color: "#B91C1C", fontWeight: "700", fontSize: 12 },
 });

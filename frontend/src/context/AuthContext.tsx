@@ -1,64 +1,37 @@
-import React, {
-  createContext,
-  useState,
-  useEffect,
-  ReactNode,
-} from "react";
+import React, { createContext, useState, useEffect, ReactNode } from "react";
+import { getItem, removeItems, setItem, StorageKeys } from "../utils/storage";
 
-import AsyncStorage from "@react-native-async-storage/async-storage";
-
-export type AuthContextType = {
+type AuthContextType = {
   userToken: string | null;
-  login: (token: string) => Promise<void>;
+  login: (token: string, refreshToken?: string) => Promise<void>;
   logout: () => Promise<void>;
 };
 
-export const AuthContext =
-  createContext<AuthContextType | undefined>(
-    undefined
-  );
+export const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-type Props = {
-  children: ReactNode;
-};
+type Props = { children: ReactNode };
 
 const AuthProvider = ({ children }: Props) => {
-  const [userToken, setUserToken] =
-    useState<string | null>(null);
+  const [userToken, setUserToken] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
 
-  const [loading, setLoading] =
-    useState<boolean>(true);
-
-  const login = async (token: string) => {
+  const login = async (token: string, refreshToken?: string) => {
+    await setItem(StorageKeys.TOKEN, token);
+    if (refreshToken) await setItem(StorageKeys.REFRESH_TOKEN, refreshToken);
     setUserToken(token);
-    await AsyncStorage.setItem("token", token);
   };
 
   const logout = async () => {
+    await removeItems([StorageKeys.TOKEN, StorageKeys.REFRESH_TOKEN]);
     setUserToken(null);
-    await AsyncStorage.removeItem("token");
   };
 
   useEffect(() => {
-    const checkLogin = async () => {
-      const token =
-        await AsyncStorage.getItem("token");
-
-      setUserToken(token);
-      setLoading(false);
-    };
-
-    checkLogin();
+    getItem(StorageKeys.TOKEN).then(setUserToken).finally(() => setLoading(false));
   }, []);
 
   return (
-    <AuthContext.Provider
-      value={{
-        userToken,
-        login,
-        logout,
-      }}
-    >
+    <AuthContext.Provider value={{ userToken, login, logout }}>
       {!loading && children}
     </AuthContext.Provider>
   );

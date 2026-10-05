@@ -142,18 +142,15 @@ class ConversationSerializer(serializers.ModelSerializer):
         if not user:
             return ""
 
-        profile = getattr(user, "clientprofile", None)
+        profile = getattr(user, "client_profile", None)
 
         if profile is None:
-            profile = getattr(user, "freelancerprofile", None)
+            profile = getattr(user, "freelancer_profile", None)
 
         if profile is None:
             return ""
 
-        photo = getattr(profile, "profile_photo", None)
-
-        if not photo:
-            photo = getattr(profile, "photo", None)
+        photo = getattr(profile, "avatar", None)
 
         if not photo:
             return ""

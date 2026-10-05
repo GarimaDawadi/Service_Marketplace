@@ -37,7 +37,6 @@ export default function RegisterScreen() {
   const [sendingOtp, setSendingOtp] = useState(false);
   const [verifying, setVerifying] = useState(false);
   const [cooldown, setCooldown] = useState(0);
-  const [usernameTaken, setUsernameTaken] = useState(false);
 
   // Access token returned by /api/auth/register/
   const [accessToken, setAccessToken] = useState<string | null>(null);
@@ -116,11 +115,6 @@ export default function RegisterScreen() {
       return;
     }
 
-    if (usernameTaken) {
-      showPopup("error", "Username taken", "Please choose another username.");
-      return;
-    }
-
     if (!email.trim()) {
       showPopup("error", "Email required", "Enter your email to receive the OTP code.");
       return;
@@ -131,11 +125,11 @@ export default function RegisterScreen() {
       return;
     }
 
-    if (password.length < 6) {
+    if (password.length < 8) {
       showPopup(
         "error",
         "Password too short",
-        "Password must be at least 6 characters."
+        "Password must be at least 8 characters."
       );
       return;
     }
@@ -298,16 +292,6 @@ export default function RegisterScreen() {
     }
   };
 
-  const checkUsernameAvailable = async () => {
-    const name = username.trim();
-
-    if (name.length < 3) return;
-
-    // Skip username check for now - backend endpoint not implemented
-    // Can be added later as enhancement
-    setUsernameTaken(false);
-  };
-
   const step = otpSent ? 2 : 1;
 
   return (
@@ -357,26 +341,10 @@ export default function RegisterScreen() {
             <TextInput
               placeholder="Choose a username"
               value={username}
-              onChangeText={(t) => {
-                setUsername(t);
-                setUsernameTaken(false);
-              }}
-              onBlur={checkUsernameAvailable}
+              onChangeText={setUsername}
               autoCapitalize="none"
               style={s.input}
             />
-
-            {usernameTaken ? (
-              <Text
-                style={{
-                  color: "#DC2626",
-                  marginBottom: 10,
-                  fontSize: 13,
-                }}
-              >
-                Username already taken — choose another.
-              </Text>
-            ) : null}
 
             <Text style={s.label}>Email</Text>
 
@@ -402,7 +370,7 @@ export default function RegisterScreen() {
             <Text style={s.label}>Password</Text>
 
             <TextInput
-              placeholder="Min. 6 characters"
+              placeholder="Min. 8 characters"
               value={password}
               onChangeText={setPassword}
               secureTextEntry

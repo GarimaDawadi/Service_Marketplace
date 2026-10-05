@@ -154,11 +154,11 @@ export default function ProfileSection({ profile, onUpdated }: Props) {
       return;
     }
 
-    if (newPw.length < 6) {
+    if (newPw.length < 8) {
       show(
         "error",
         "Too short",
-        "New password must be at least 6 characters."
+        "New password must be at least 8 characters."
       );
       return;
     }
@@ -308,9 +308,9 @@ export default function ProfileSection({ profile, onUpdated }: Props) {
             (profile.is_verified ? " ✓" : "")
           }
           highlight={
-            profile.kyc_status === "approved"
+            profile.kyc_status?.toUpperCase() === "APPROVED"
               ? "approved"
-              : profile.kyc_status === "rejected"
+              : profile.kyc_status?.toUpperCase() === "REJECTED"
                 ? "rejected"
                 : undefined
           }

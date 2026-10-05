@@ -1,63 +1,72 @@
 from django.core.exceptions import ValidationError
-from .models import ProjectBooking as B
+
+from .models import ProjectBooking as Booking
+
+
 ALLOWED_TRANSITIONS = {
-    B.Status.DRAFT: {B.Status.PENDING_PROVIDER_RESPONSE, B.Status.CANCELLED},
-    B.Status.PENDING_PROVIDER_RESPONSE: {
-        B.Status.COUNTER_OFFERED,
-        B.Status.AGREEMENT_REACHED,
-        B.Status.REJECTED,
-        B.Status.EXPIRED,
-        B.Status.CANCELLED,
+    Booking.Status.DRAFT: {Booking.Status.PENDING_PROVIDER_RESPONSE, Booking.Status.CANCELLED},
+    Booking.Status.PENDING_PROVIDER_RESPONSE: {
+        Booking.Status.COUNTER_OFFER,
+        Booking.Status.AGREEMENT,
+        Booking.Status.REJECTED,
+        Booking.Status.EXPIRED,
+        Booking.Status.CANCELLED,
     },
-    B.Status.COUNTER_OFFERED: {
-        B.Status.AGREEMENT_REACHED,
-        B.Status.COUNTER_OFFERED,
-        B.Status.CANCELLED,
-        B.Status.REJECTED,
-        B.Status.PENDING_PROVIDER_RESPONSE,
+    Booking.Status.COUNTER_OFFER: {
+        Booking.Status.AGREEMENT,
+        Booking.Status.COUNTER_OFFER,
+        Booking.Status.REJECTED,
+        Booking.Status.CANCELLED,
     },
-    B.Status.AGREEMENT_REACHED: {B.Status.PAYMENT_PENDING, B.Status.CANCELLED},
-    B.Status.PAYMENT_PENDING: {
-        B.Status.CONFIRMED,
-        B.Status.PAYMENT_FAILED,
-        B.Status.CANCELLED,
+    Booking.Status.AGREEMENT: {Booking.Status.PAYMENT_PENDING, Booking.Status.CANCELLED},
+    Booking.Status.PAYMENT_PENDING: {
+        Booking.Status.CONFIRMED,
+        Booking.Status.PAYMENT_FAILED,
+        Booking.Status.CANCELLED,
     },
-    B.Status.PAYMENT_FAILED: {B.Status.PAYMENT_PENDING, B.Status.CANCELLED},
-    B.Status.CONFIRMED: {B.Status.IN_PROGRESS, B.Status.CANCELLED, B.Status.DISPUTED},
-    B.Status.IN_PROGRESS: {
-        B.Status.DELIVERABLE_SUBMITTED,
-        B.Status.DISPUTED,
-        B.Status.CANCELLED,
-        B.Status.COMPLETED,
+    Booking.Status.PAYMENT_FAILED: {Booking.Status.PAYMENT_PENDING, Booking.Status.CANCELLED},
+    Booking.Status.CONFIRMED: {
+        Booking.Status.IN_PROGRESS,
+        Booking.Status.CANCELLED,
+        Booking.Status.DISPUTED,
     },
-    B.Status.DELIVERABLE_SUBMITTED: {
-        B.Status.CLIENT_REVIEWING,
-        B.Status.REVISION_REQUESTED,
-        B.Status.COMPLETED,
-        B.Status.DISPUTED,
+    Booking.Status.IN_PROGRESS: {
+        Booking.Status.DELIVERABLE_SENT,
+        Booking.Status.DISPUTED,
+        Booking.Status.CANCELLED,
     },
-    B.Status.CLIENT_REVIEWING: {
-        B.Status.COMPLETED,
-        B.Status.REVISION_REQUESTED,
-        B.Status.DISPUTED,
+    Booking.Status.DELIVERABLE_SENT: {
+        Booking.Status.REVISION_REQUESTED,
+        Booking.Status.COMPLETED,
+        Booking.Status.DISPUTED,
     },
-    B.Status.REVISION_REQUESTED: {B.Status.IN_PROGRESS, B.Status.DISPUTED},
-    B.Status.COMPLETED: {B.Status.REVIEWED, B.Status.DISPUTED},
-    B.Status.REVIEWED: set(),
-    B.Status.REJECTED: set(),
-    B.Status.CANCELLED: set(),
-    B.Status.EXPIRED: set(),
-    B.Status.DISPUTED: {B.Status.IN_PROGRESS, B.Status.COMPLETED, B.Status.CANCELLED},
+    Booking.Status.REVISION_REQUESTED: {
+        Booking.Status.IN_PROGRESS,
+        Booking.Status.DISPUTED,
+    },
+    Booking.Status.COMPLETED: {Booking.Status.REVIEWED, Booking.Status.DISPUTED},
+    Booking.Status.REVIEWED: set(),
+    Booking.Status.REJECTED: set(),
+    Booking.Status.CANCELLED: set(),
+    Booking.Status.EXPIRED: set(),
+    Booking.Status.DISPUTED: {
+        Booking.Status.IN_PROGRESS,
+        Booking.Status.COMPLETED,
+        Booking.Status.CANCELLED,
+    },
 }
+
 LOCKED_AFTER_PAYMENT = {
-    B.Status.CONFIRMED,
-    B.Status.IN_PROGRESS,
-    B.Status.DELIVERABLE_SUBMITTED,
-    B.Status.CLIENT_REVIEWING,
-    B.Status.REVISION_REQUESTED,
-    B.Status.COMPLETED,
-    B.Status.REVIEWED,
+    Booking.Status.CONFIRMED,
+    Booking.Status.IN_PROGRESS,
+    Booking.Status.DELIVERABLE_SENT,
+    Booking.Status.REVISION_REQUESTED,
+    Booking.Status.COMPLETED,
+    Booking.Status.REVIEWED,
+    Booking.Status.DISPUTED,
 }
+
+
 def transition(booking, new_status):
     allowed = ALLOWED_TRANSITIONS.get(booking.status, set())
     if new_status not in allowed:

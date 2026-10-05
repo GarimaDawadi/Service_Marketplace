@@ -37,8 +37,10 @@ export default function ChatScreen() {
   }>();
 
   const [room, setRoom] = useState<ChatRoom | null>(null);
+  const [rooms, setRooms] = useState<ChatRoom[]>([]);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [loading, setLoading] = useState(true);
+  const [roomError, setRoomError] = useState("");
   const [sending, setSending] = useState(false);
   const [inputText, setInputText] = useState("");
   const [currentUserId, setCurrentUserId] = useState<number | null>(null);
@@ -73,22 +75,25 @@ export default function ChatScreen() {
 
   // Load room info
   const loadRoom = useCallback(async () => {
+    setLoading(true);
+    setRoomError("");
+    setRoom(null);
+    setRooms([]);
     try {
       if (roomId) {
-        const rooms = await chatsApi.listRooms();
-        const found = rooms.find((r) => r.id === Number(roomId));
+        const roomList = await chatsApi.listRooms();
+        setRooms(roomList);
+        const found = roomList.find((r) => r.id === Number(roomId));
         if (found) setRoom(found);
+        else setRoomError("This conversation is unavailable or you do not have access to it.");
       } else if (bookingId) {
-        const r = await chatsApi.roomForBooking(Number(bookingId));
-        setRoom(r);
+        const currentRoom = await chatsApi.roomForBooking(Number(bookingId));
+        setRoom(currentRoom);
+      } else {
+        setRooms(await chatsApi.listRooms());
       }
     } catch (err) {
-      setPopup({
-        visible: true,
-        type: "error",
-        title: "Error",
-        message: getApiErrorMessage(err, "Could not load chat room."),
-      });
+      setRoomError(getApiErrorMessage(err, "Could not load chat room."));
     } finally {
       setLoading(false);
     }
@@ -100,6 +105,7 @@ export default function ChatScreen() {
     try {
       const msgs = await chatsApi.getMessages(room.id);
       setMessages(msgs);
+      await chatsApi.markRead(room.id);
     } catch {
       // Silently fail on poll - user will see last known messages
     }
@@ -126,7 +132,7 @@ export default function ChatScreen() {
     setSending(true);
     setInputText("");
     try {
-      await chatsApi.sendMessage(room.id, { text });
+      await chatsApi.sendMessage(room.id, text);
       await loadMessages();
     } catch (err) {
       setInputText(text);
@@ -185,10 +191,54 @@ export default function ChatScreen() {
     );
   }
 
+  if (roomError) {
+    return (
+      <View style={styles.center}>
+        <Text style={styles.loadError}>{roomError}</Text>
+        <TouchableOpacity style={styles.backBtn} onPress={() => void loadRoom()}><Text style={styles.backBtnText}>Try again</Text></TouchableOpacity>
+        <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}><Text style={styles.backBtnText}>Go back</Text></TouchableOpacity>
+      </View>
+    );
+  }
+
+  if (!room && !roomId && !bookingId) {
+    return (
+      <View style={[styles.screen, { paddingTop: insets.top + 16, paddingHorizontal: 16 }]}>
+        <Text style={styles.inboxTitle}>Messages</Text>
+        <Text style={styles.inboxSubtitle}>Conversations linked to your bookings</Text>
+        {rooms.length === 0 ? (
+          <View style={styles.inboxEmpty}>
+            <Text style={styles.emptyText}>No conversations yet. Booking chats appear here.</Text>
+          </View>
+        ) : (
+          <FlatList
+            data={rooms}
+            keyExtractor={(item) => String(item.id)}
+            contentContainerStyle={{ paddingBottom: 20 }}
+            renderItem={({ item }) => (
+              <TouchableOpacity
+                style={styles.roomCard}
+                onPress={() => router.push({ pathname: "/chat", params: { roomId: String(item.id) } } as never)}
+              >
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.roomName}>{item.other_user_name || item.service_title || `Booking #${item.booking}`}</Text>
+                  <Text style={styles.roomMessage} numberOfLines={1}>{item.last_message?.text || "No messages yet"}</Text>
+                  <Text style={styles.roomService}>{item.service_title}</Text>
+                </View>
+                {item.unread_count > 0 ? <View style={styles.unreadBadge}><Text style={styles.unreadText}>{item.unread_count}</Text></View> : null}
+              </TouchableOpacity>
+            )}
+          />
+        )}
+        <FeedbackModal visible={popup.visible} type={popup.type} title={popup.title} message={popup.message} onClose={() => setPopup((value) => ({ ...value, visible: false }))} />
+      </View>
+    );
+  }
+
   if (!room) {
     return (
       <View style={styles.center}>
-        <Text style={styles.emptyText}>No chat room found.</Text>
+        <Text style={styles.emptyText}>No chat room found for this booking.</Text>
         <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
           <Text style={styles.backBtnText}>Go back</Text>
         </TouchableOpacity>
@@ -284,8 +334,18 @@ const styles = StyleSheet.create({
   center: { flex: 1, alignItems: "center", justifyContent: "center", padding: 20 },
   emptyWrap: { padding: 40, alignItems: "center" },
   emptyText: { color: TEXT_MUTED, fontSize: 15, textAlign: "center" },
+  loadError: { color: "#B91C1C", fontSize: 14, lineHeight: 20, textAlign: "center" },
   backBtn: { marginTop: 16, paddingHorizontal: 16, paddingVertical: 10 },
   backBtnText: { color: PRIMARY, fontWeight: "700" },
+  inboxTitle: { color: TEXT, fontSize: 24, fontWeight: "900" },
+  inboxSubtitle: { color: TEXT_MUTED, marginTop: 5, marginBottom: 16 },
+  inboxEmpty: { marginTop: 10, padding: 18, backgroundColor: CARD, borderRadius: 10, borderWidth: 1, borderColor: BORDER },
+  roomCard: { flexDirection: "row", alignItems: "center", gap: 10, padding: 14, backgroundColor: CARD, borderRadius: 10, borderWidth: 1, borderColor: BORDER, marginBottom: 9 },
+  roomName: { color: TEXT, fontWeight: "800", fontSize: 14 },
+  roomMessage: { color: TEXT_MUTED, marginTop: 5, fontSize: 12 },
+  roomService: { color: TEXT_MUTED, marginTop: 4, fontSize: 10 },
+  unreadBadge: { minWidth: 22, height: 22, borderRadius: 11, backgroundColor: PRIMARY, alignItems: "center", justifyContent: "center", paddingHorizontal: 5 },
+  unreadText: { color: "#fff", fontWeight: "800", fontSize: 10 },
 
   // Header
   header: {

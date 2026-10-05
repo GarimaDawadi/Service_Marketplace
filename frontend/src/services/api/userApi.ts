@@ -15,75 +15,70 @@ export type UserProfile = {
   kyc_status?: string;
   is_verified?: boolean;
 
-  client_profile?: any;
-  freelancer_profile?: any;
-  profile?: any;
+  client_profile?: Record<string, unknown>;
+  freelancer_profile?: Record<string, unknown>;
+  profile?: Record<string, unknown>;
+  kyc?: { status: string; rejection_reason?: string };
 };
+
+function normalizeUserProfile(data: UserProfile): UserProfile {
+  const nested = (data.freelancer_profile || data.client_profile || data.profile) as Record<string, unknown> | undefined;
+  return {
+    ...data,
+    kyc_status: data.kyc_status || String(nested?.kyc_status || ""),
+    is_verified: data.is_verified ?? Boolean(nested?.is_verified),
+  };
+}
 
 export const userApi = {
   // ------------------------------------------
   // Current logged-in user
   // ------------------------------------------
 
-  me: () =>
-    api
-      .get<UserProfile>("api/auth/me/")
-      .then((r) => r.data),
+  me: async (): Promise<UserProfile> => {
+    const response = await api.get<UserProfile>("api/auth/me/");
+    return normalizeUserProfile(response.data);
+  },
 
   // ------------------------------------------
   // Save profile information
   // ------------------------------------------
 
-  updateProfile: (data: {
+  updateProfile: async (data: {
     username?: string;
     email?: string;
     phone?: string;
-
     full_name?: string;
     bio?: string;
     location?: string;
     address?: string;
-
     professional_title?: string;
     experience_years?: number;
     languages?: string;
     education?: string;
     certifications?: string;
-  }) =>
-    api
-      .patch<UserProfile>(
-        "api/auth/profile/",
-        data
-      )
-      .then((r) => r.data),
+  }): Promise<UserProfile> => {
+    const response = await api.patch<UserProfile>("api/auth/profile/", data);
+    return normalizeUserProfile(response.data);
+  },
 
   // ------------------------------------------
   // Upload profile picture
   // ------------------------------------------
 
-  uploadPhoto: (formData: FormData) =>
-    api
-      .post(
-        "api/auth/profile/photo/",
-        formData,
-        {
-          headers: {
-            "Content-Type": "multipart/form-data",
-          },
-        }
-      )
-      .then((r) => r.data),
+  uploadPhoto: async (formData: FormData): Promise<UserProfile> => {
+    await api.post("api/auth/profile/photo/", formData);
+    return userApi.me();
+  },
 
   // ------------------------------------------
   // Delete profile picture
   // ------------------------------------------
 
-  deletePhoto: () =>
-    api
-      .delete(
-        "api/auth/profile/photo/delete/"
-      )
-      .then((r) => r.data),
+  deletePhoto: async (): Promise<UserProfile> => {
+    await api.delete("api/auth/profile/photo/delete/");
+    return userApi.me();
+  },
 
   // ------------------------------------------
   // Change password

@@ -1,18 +1,22 @@
 import Constants from "expo-constants";
 import { Platform } from "react-native";
 
-/** Last-resort LAN IP — prefer Expo debuggerHost or app.json extra.apiUrl. */
-const FALLBACK_HOST = "192.168.1.88";
 export const API_PORT = 8001;
 
+function configuredApiUrl(): string | null {
+  const publicUrl = process.env.EXPO_PUBLIC_API_URL;
+  const extra = Constants.expoConfig?.extra?.apiUrl as string | undefined;
+  const value = publicUrl?.trim() || extra?.trim();
+  return value ? normalizeBaseUrl(value) : null;
+}
+
 function hostFromExpo(): string | null {
-  const go = Constants.expoGoConfig?.debuggerHost;
-  if (go) return go.split(":")[0];
-
-  const legacy = (Constants as { manifest?: { debuggerHost?: string } }).manifest
-    ?.debuggerHost;
-  if (legacy) return legacy.split(":")[0];
-
+  const debuggerHost = Constants.expoGoConfig?.debuggerHost;
+  if (debuggerHost) return debuggerHost.split(":")[0];
+  const hostUri = Constants.expoConfig?.hostUri;
+  if (hostUri) return hostUri.split(":")[0];
+  const manifest = (Constants as { manifest?: { debuggerHost?: string } }).manifest;
+  if (manifest?.debuggerHost) return manifest.debuggerHost.split(":")[0];
   return null;
 }
 
@@ -22,42 +26,32 @@ function normalizeBaseUrl(url: string): string {
 }
 
 function isTunnelHost(host: string): boolean {
-  const h = host.toLowerCase();
-  // When running Expo with `--tunnel`, debuggerHost can be a public/tunnel domain.
-  // That host can reach Expo, but it cannot reach your local Django server on :8001.
-  return h.includes("ngrok") || h.endsWith(".ngrok.io") || h.endsWith(".ngrok.app") || h.endsWith(".exp.direct");
+  const value = host.toLowerCase();
+  return value.includes("ngrok") || value.endsWith(".exp.direct") || value.includes("expo.dev");
 }
 
 export function getApiBaseUrl(): string {
-  // Expo Go / dev client: debuggerHost is the PC IP the phone can reach.
+  const configured = configuredApiUrl();
+  if (configured) return configured;
+
   const host = hostFromExpo();
   if (host && host !== "localhost" && host !== "127.0.0.1" && !isTunnelHost(host)) {
     return `http://${host}:${API_PORT}/`;
   }
 
-  const extra = Constants.expoConfig?.extra?.apiUrl as string | undefined;
-  if (extra?.trim()) {
-    return normalizeBaseUrl(extra);
-  }
+  // Expo web should use same-origin relative requests; production can reverse-proxy
+  // /api and /media to Django without embedding a machine-specific address.
+  if (Platform.OS === "web") return "/";
 
-  if (Platform.OS === "web") {
-    return `http://127.0.0.1:${API_PORT}/`;
-  }
-
-  return `http://${FALLBACK_HOST}:${API_PORT}/`;
+  // Android emulator's host bridge. Physical devices should set EXPO_PUBLIC_API_URL
+  // to the reachable LAN or HTTPS API address.
+  if (Platform.OS === "android") return `http://10.0.2.2:${API_PORT}/`;
+  return `http://127.0.0.1:${API_PORT}/`;
 }
 
-/**
- * Resolve a (possibly relative) media URL returned by the Django backend
- * into an absolute URL the current device can reach.
- */
 export function resolveMediaUrl(url: string | null | undefined): string {
   if (!url) return "";
-  // Already absolute — use as-is
-  if (url.startsWith("http://") || url.startsWith("https://") || url.startsWith("data:")) {
-    return url;
-  }
-  // Relative path — prepend the API base (strip trailing slash to avoid double-slash)
+  if (/^(https?:|data:)/i.test(url)) return url;
   const base = getApiBaseUrl().replace(/\/$/, "");
   const path = url.startsWith("/") ? url : `/${url}`;
   return `${base}${path}`;

@@ -1,332 +1,147 @@
 import React, { useEffect, useState } from "react";
-import {
-  Text,
-  TextInput,
-  TouchableOpacity,
-  ActivityIndicator,
-  View,
-  StyleSheet,
-} from "react-native";
+import { ActivityIndicator, StyleSheet, Text, TextInput, TouchableOpacity, View } from "react-native";
+import * as DocumentPicker from "expo-document-picker";
 import { useRouter } from "expo-router";
 import ScreenShell from "../../components/ScreenShell";
-import FeedbackModal, {
-  type FeedbackType,
-} from "../../components/FeedbackModal";
-import { kycApi, type ProviderProfile } from "../../services/api/kycApi";
-import { StorageKeys, setItem } from "../../utils/storage";
-import { sharedStyles } from "../../theme/sharedStyles";
+import FeedbackModal, { type FeedbackType } from "../../components/FeedbackModal";
+import { kycApi, type KycSubmission, type ProviderProfile } from "../../services/api/kycApi";
 import { getApiErrorMessage } from "../../services/api/client";
-import {
-  PRIMARY,
-  CARD,
-  TEXT,
-  TEXT_MUTED,
-  BORDER,
-  BACKGROUND,
-} from "../../theme/colors";
+import { StorageKeys, setItem } from "../../utils/storage";
+import { BORDER, CARD, PRIMARY, TAG_BG, TEXT, TEXT_MUTED } from "../../theme/colors";
+
+const DOCUMENT_TYPES = ["National ID", "Passport", "Driving license", "Professional license"];
+type PickedFile = { uri: string; name: string; type: string };
 
 export default function ProviderKycScreen() {
   const router = useRouter();
-
   const [profile, setProfile] = useState<ProviderProfile | null>(null);
-  const [idNumber, setIdNumber] = useState("");
+  const [submission, setSubmission] = useState<KycSubmission | null>(null);
+  const [legalName, setLegalName] = useState("");
+  const [documentType, setDocumentType] = useState(DOCUMENT_TYPES[0]);
+  const [documentNumber, setDocumentNumber] = useState("");
+  const [front, setFront] = useState<PickedFile | null>(null);
+  const [back, setBack] = useState<PickedFile | null>(null);
   const [loading, setLoading] = useState(false);
-  const [checkingProfile, setCheckingProfile] = useState(true);
+  const [checking, setChecking] = useState(true);
+  const [popup, setPopup] = useState<{ visible: boolean; type: FeedbackType; title: string; message: string; onConfirm?: () => void }>({ visible: false, type: "info", title: "", message: "" });
+  const status = (profile?.kyc_status || submission?.status || "NOT_SUBMITTED").toUpperCase();
+  const approved = status === "APPROVED";
+  const pending = status === "PENDING";
 
-  const [popup, setPopup] = useState({
-    visible: false,
-    type: "info" as FeedbackType,
-    title: "",
-    message: "",
-    onConfirm: undefined as (() => void) | undefined,
-  });
-
-  useEffect(() => {
-    const loadProfile = async () => {
-      try {
-        const currentProfile = await kycApi.getProfile();
-
-        setProfile(currentProfile);
-
-        if (currentProfile.id_number) {
-          setIdNumber(currentProfile.id_number);
-        }
-      } catch {
-        // If profile cannot be loaded, keep the form usable.
-      } finally {
-        setCheckingProfile(false);
-      }
-    };
-
-    loadProfile();
-  }, []);
-
-  const showPopup = (
-    type: FeedbackType,
-    title: string,
-    message: string,
-    onConfirm?: () => void
-  ) => {
-    setPopup({
-      visible: true,
-      type,
-      title,
-      message,
-      onConfirm,
-    });
+  const load = async () => {
+    try {
+      const [currentProfile, currentSubmission] = await Promise.all([kycApi.getProfile(), kycApi.latestSubmission()]);
+      setProfile(currentProfile);
+      setSubmission(currentSubmission);
+      setLegalName(currentSubmission?.legal_name || "");
+      setDocumentType(currentSubmission?.document_type || DOCUMENT_TYPES[0]);
+      setDocumentNumber(currentSubmission?.document_number || "");
+      await setItem(StorageKeys.KYC_STATUS, currentProfile.kyc_status);
+    } catch (error) {
+      setPopup({ visible: true, type: "error", title: "Could not load verification", message: getApiErrorMessage(error, "Check your connection and try again.") });
+    } finally {
+      setChecking(false);
+    }
   };
+  useEffect(() => { void load(); }, []);
 
-  const closePopup = () => {
-    const cb = popup.onConfirm;
-
-    setPopup((p) => ({
-      ...p,
-      visible: false,
-      onConfirm: undefined,
-    }));
-
-    cb?.();
+  const pick = async (side: "front" | "back") => {
+    try {
+      const result = await DocumentPicker.getDocumentAsync({ type: ["image/*", "application/pdf"], copyToCacheDirectory: true, multiple: false });
+      if (result.canceled || !result.assets[0]) return;
+      const asset = result.assets[0];
+      const file = { uri: asset.uri, name: asset.name, type: asset.mimeType || (asset.name.toLowerCase().endsWith(".pdf") ? "application/pdf" : "image/jpeg") };
+      if (side === "front") setFront(file); else setBack(file);
+    } catch (error) {
+      setPopup({ visible: true, type: "error", title: "File selection failed", message: getApiErrorMessage(error, "Could not read this file.") });
+    }
   };
 
   const submit = async () => {
-    const cleanedId = idNumber.trim();
-
-    if (!cleanedId) {
-      showPopup(
-        "error",
-        "ID required",
-        "Enter your national ID or license number."
-      );
+    if (!legalName.trim() || !documentNumber.trim() || !front) {
+      setPopup({ visible: true, type: "error", title: "Documents required", message: "Enter your legal name and document number, and attach the front of your identity document." });
       return;
     }
-
+    const form = new FormData();
+    form.append("legal_name", legalName.trim());
+    form.append("document_type", documentType);
+    form.append("document_number", documentNumber.trim());
+    form.append("document_front", front as unknown as Blob);
+    if (back) form.append("document_back", back as unknown as Blob);
     setLoading(true);
-
     try {
-      const updatedProfile = await kycApi.submitKyc(cleanedId);
-
+      const saved = await kycApi.submitKyc(form);
+      setSubmission(saved);
+      const updatedProfile = await kycApi.getProfile();
       setProfile(updatedProfile);
-
-      await setItem(
-        StorageKeys.KYC_STATUS,
-        updatedProfile.kyc_status
-      );
-
-      showPopup(
-        "success",
-        "KYC submitted",
-        "Your KYC has been submitted successfully. Admin will review it before verification.",
-        () => router.replace("/provider-home")
-      );
-    } catch (err) {
-      showPopup(
-        "error",
-        "Submission failed",
-        getApiErrorMessage(
-          err,
-          "KYC submission failed. Please try again."
-        )
-      );
+      await setItem(StorageKeys.KYC_STATUS, updatedProfile.kyc_status);
+      setPopup({ visible: true, type: "success", title: "Verification submitted", message: "Your identity documents are waiting for admin review.", onConfirm: () => router.replace("/provider-home") });
+    } catch (error) {
+      setPopup({ visible: true, type: "error", title: "Submission failed", message: getApiErrorMessage(error, "Could not submit your documents.") });
     } finally {
       setLoading(false);
     }
   };
 
-  if (checkingProfile) {
-    return (
-      <View style={styles.loadingScreen}>
-        <ActivityIndicator color={PRIMARY} />
-      </View>
-    );
-  }
-
-  const kycStatus = profile?.kyc_status || "pending";
-
-  const isApproved =
-    profile?.is_verified || kycStatus === "approved";
-
-  const isSubmitted =
-    kycStatus === "submitted";
+  if (checking) return <View style={styles.center}><ActivityIndicator color={PRIMARY} /></View>;
 
   return (
-    <ScreenShell
-      step="Step 6–7 · Verification"
-      title="KYC submission"
-      subtitle="Submit your ID for admin approval and a verified badge on your profile."
-    >
-      {/* Current KYC status */}
+    <ScreenShell step="Identity verification" title="Provider KYC" subtitle="Your documents are sent securely for admin review. Publishing services remains disabled until approval.">
       <View style={styles.statusCard}>
-        <Text style={styles.statusLabel}>
-          Current KYC status
-        </Text>
-
-        <Text style={styles.statusValue}>
-          {kycStatus.toUpperCase()}
-        </Text>
-
-        {isApproved ? (
-          <Text style={styles.statusDescription}>
-            Your identity has been verified. You can now publish
-            services.
-          </Text>
-        ) : isSubmitted ? (
-          <Text style={styles.statusDescription}>
-            Your KYC has been submitted and is waiting for admin
-            approval.
-          </Text>
-        ) : kycStatus === "rejected" ? (
-          <Text style={styles.statusDescription}>
-            Your KYC was rejected. You can update your information
-            and submit it again.
-          </Text>
-        ) : (
-          <Text style={styles.statusDescription}>
-            Your KYC has not been submitted yet.
-          </Text>
-        )}
+        <Text style={styles.label}>Current status</Text>
+        <Text style={[styles.status, approved && styles.approved, status === "REJECTED" && styles.rejected]}>{status.replace(/_/g, " ")}</Text>
+        {status === "PENDING" ? <Text style={styles.hint}>Your documents are under review. You can continue using the provider dashboard.</Text> : null}
+        {status === "REJECTED" && profile?.rejection_reason ? <Text style={styles.rejectionReason}>Admin feedback: {profile.rejection_reason}</Text> : null}
+        {approved ? <Text style={styles.hint}>Identity approved. You can publish services from your provider dashboard.</Text> : null}
       </View>
 
-      {/* ID input */}
-      <Text style={styles.label}>
-        National ID / License Number
-      </Text>
-
-      <TextInput
-        placeholder="Enter your national ID or license number"
-        placeholderTextColor={TEXT_MUTED}
-        value={idNumber}
-        onChangeText={setIdNumber}
-        editable={!isApproved && !loading}
-        style={[
-          sharedStyles.input,
-          isApproved && styles.disabledInput,
-        ]}
-        autoCapitalize="characters"
-      />
-
-      {/* Submit / Resubmit */}
-      {!isApproved ? (
-        <TouchableOpacity
-          onPress={submit}
-          disabled={loading}
-          style={[
-            sharedStyles.btnPrimary,
-            loading && { opacity: 0.65 },
-          ]}
-        >
-          {loading ? (
-            <ActivityIndicator color="#fff" />
-          ) : (
-            <Text style={sharedStyles.btnPrimaryText}>
-              {kycStatus === "rejected"
-                ? "Resubmit KYC"
-                : isSubmitted
-                  ? "Update KYC"
-                  : "Submit KYC"}
-            </Text>
-          )}
-        </TouchableOpacity>
-      ) : (
-        <View style={styles.approvedBox}>
-          <Text style={styles.approvedText}>
-            ✓ Your KYC is approved
-          </Text>
+      {!approved && !pending ? (
+        <View style={styles.form}>
+          <Text style={styles.label}>Legal name</Text>
+          <TextInput value={legalName} onChangeText={setLegalName} placeholder="Name as shown on document" style={styles.input} />
+          <Text style={styles.label}>Document type</Text>
+          <View style={styles.row}>
+            {DOCUMENT_TYPES.map((type) => <TouchableOpacity key={type} onPress={() => setDocumentType(type)} style={[styles.chip, documentType === type && styles.selectedChip]}><Text style={[styles.chipText, documentType === type && styles.selectedChipText]}>{type}</Text></TouchableOpacity>)}
+          </View>
+          <Text style={styles.label}>Document number</Text>
+          <TextInput value={documentNumber} onChangeText={setDocumentNumber} autoCapitalize="characters" style={styles.input} placeholder="Document number" />
+          <Text style={styles.label}>Front of document *</Text>
+          <TouchableOpacity style={styles.fileButton} onPress={() => void pick("front")}><Text style={styles.fileText}>{front?.name || "Choose image or PDF"}</Text></TouchableOpacity>
+          <Text style={styles.label}>Back of document (optional)</Text>
+          <TouchableOpacity style={styles.fileButton} onPress={() => void pick("back")}><Text style={styles.fileText}>{back?.name || "Choose image or PDF"}</Text></TouchableOpacity>
+          <TouchableOpacity style={[styles.submit, loading && styles.disabled]} disabled={loading} onPress={() => void submit()}>
+            {loading ? <ActivityIndicator color="#fff" /> : <Text style={styles.submitText}>{status === "REJECTED" ? "Resubmit documents" : "Submit for review"}</Text>}
+          </TouchableOpacity>
         </View>
-      )}
-
-      {/* Back to dashboard */}
-      <TouchableOpacity
-        onPress={() => router.replace("/provider-home")}
-        style={styles.backButton}
-      >
-        <Text style={styles.backText}>
-          Back to Dashboard
-        </Text>
-      </TouchableOpacity>
-
-      <FeedbackModal
-        visible={popup.visible}
-        type={popup.type}
-        title={popup.title}
-        message={popup.message}
-        onClose={closePopup}
-      />
+      ) : null}
+      {pending && submission ? <View style={styles.statusCard}><Text style={styles.label}>Submitted application</Text><Text style={styles.hint}>{submission.document_type} · {submission.document_number}</Text><Text style={styles.hint}>Submitted {new Date(submission.submitted_at).toLocaleDateString()}</Text></View> : null}
+      <TouchableOpacity style={styles.back} onPress={() => router.replace("/provider-home")}><Text style={styles.backText}>Back to provider dashboard</Text></TouchableOpacity>
+      <FeedbackModal visible={popup.visible} type={popup.type} title={popup.title} message={popup.message} onClose={() => { const callback = popup.onConfirm; setPopup((value) => ({ ...value, visible: false, onConfirm: undefined })); callback?.(); }} confirmLabel={popup.type === "success" ? "Continue" : "OK"} />
     </ScreenShell>
   );
 }
 
 const styles = StyleSheet.create({
-  loadingScreen: {
-    flex: 1,
-    backgroundColor: BACKGROUND,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-
-  statusCard: {
-    backgroundColor: CARD,
-    borderWidth: 1,
-    borderColor: BORDER,
-    borderRadius: 8,
-    padding: 16,
-    marginBottom: 20,
-  },
-
-  statusLabel: {
-    fontSize: 12,
-    fontWeight: "600",
-    color: TEXT_MUTED,
-    marginBottom: 5,
-  },
-
-  statusValue: {
-    fontSize: 18,
-    fontWeight: "800",
-    color: PRIMARY,
-    marginBottom: 6,
-  },
-
-  statusDescription: {
-    fontSize: 13,
-    lineHeight: 20,
-    color: TEXT_MUTED,
-  },
-
-  label: {
-    fontSize: 13,
-    fontWeight: "700",
-    color: TEXT,
-    marginBottom: 7,
-  },
-
-  disabledInput: {
-    opacity: 0.6,
-  },
-
-  approvedBox: {
-    backgroundColor: CARD,
-    borderWidth: 1,
-    borderColor: BORDER,
-    borderRadius: 8,
-    padding: 16,
-    alignItems: "center",
-  },
-
-  approvedText: {
-    color: PRIMARY,
-    fontWeight: "800",
-    fontSize: 15,
-  },
-
-  backButton: {
-    marginTop: 12,
-    padding: 14,
-    alignItems: "center",
-  },
-
-  backText: {
-    color: TEXT_MUTED,
-    fontWeight: "600",
-    fontSize: 14,
-  },
+  center: { flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: TAG_BG },
+  statusCard: { backgroundColor: CARD, borderWidth: 1, borderColor: BORDER, borderRadius: 12, padding: 16, marginBottom: 16 },
+  form: { backgroundColor: CARD, borderWidth: 1, borderColor: BORDER, borderRadius: 12, padding: 16 },
+  label: { color: TEXT, fontWeight: "700", fontSize: 13, marginBottom: 7, marginTop: 8 },
+  status: { color: PRIMARY, fontWeight: "900", fontSize: 19, marginBottom: 4 },
+  approved: { color: "#15803D" },
+  rejected: { color: "#B91C1C" },
+  rejectionReason: { color: "#B91C1C", lineHeight: 20, marginTop: 8 },
+  hint: { color: TEXT_MUTED, fontSize: 13, lineHeight: 19, marginTop: 4 },
+  input: { backgroundColor: TAG_BG, borderColor: BORDER, borderWidth: 1, borderRadius: 8, padding: 12, color: TEXT, marginBottom: 9 },
+  row: { flexDirection: "row", flexWrap: "wrap", gap: 7, marginBottom: 10 },
+  chip: { paddingHorizontal: 10, paddingVertical: 8, borderWidth: 1, borderColor: BORDER, borderRadius: 8, backgroundColor: TAG_BG },
+  chipText: { color: TEXT, fontSize: 11, fontWeight: "600" },
+  selectedChip: { backgroundColor: PRIMARY, borderColor: PRIMARY },
+  selectedChipText: { color: "#fff" },
+  fileButton: { padding: 12, borderRadius: 8, borderWidth: 1, borderStyle: "dashed", borderColor: PRIMARY, backgroundColor: TAG_BG, marginBottom: 10 },
+  fileText: { color: PRIMARY, fontWeight: "700" },
+  submit: { backgroundColor: PRIMARY, borderRadius: 9, padding: 14, alignItems: "center", marginTop: 9 },
+  submitText: { color: "#fff", fontWeight: "800" },
+  disabled: { opacity: 0.6 },
+  back: { padding: 15, alignItems: "center" },
+  backText: { color: PRIMARY, fontWeight: "700" },
 });

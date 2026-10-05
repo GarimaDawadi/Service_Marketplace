@@ -1,5 +1,4 @@
-import { StorageKeys, removeItems } from "../utils/storage";
-import AsyncStorage from "@react-native-async-storage/async-storage";
+import { StorageKeys, getItem, removeItems, setItem } from "../utils/storage";
 
 export type AuthData = {
   access: string;
@@ -10,31 +9,24 @@ export type AuthData = {
 };
 
 export const setAuth = async (data: AuthData) => {
-  const pairs: [string, string][] = [
-    [StorageKeys.TOKEN, data.access],
-    [StorageKeys.ROLE, data.role],
-    [StorageKeys.USERNAME, data.username],
-  ];
-  if (data.refresh) pairs.push([StorageKeys.REFRESH_TOKEN, data.refresh]);
-  if (data.email) pairs.push([StorageKeys.EMAIL, data.email]);
-  await AsyncStorage.multiSet(pairs);
+  await Promise.all([
+    setItem(StorageKeys.TOKEN, data.access),
+    data.refresh ? setItem(StorageKeys.REFRESH_TOKEN, data.refresh) : Promise.resolve(),
+    setItem(StorageKeys.ROLE, data.role),
+    setItem(StorageKeys.USERNAME, data.username),
+    data.email ? setItem(StorageKeys.EMAIL, data.email) : Promise.resolve(),
+  ]);
 };
 
 export const getAuth = async () => {
-  const [token, refreshToken, role, username, email] = await AsyncStorage.multiGet([
-    StorageKeys.TOKEN,
-    StorageKeys.REFRESH_TOKEN,
-    StorageKeys.ROLE,
-    StorageKeys.USERNAME,
-    StorageKeys.EMAIL,
+  const [token, refreshToken, role, username, email] = await Promise.all([
+    getItem(StorageKeys.TOKEN),
+    getItem(StorageKeys.REFRESH_TOKEN),
+    getItem(StorageKeys.ROLE),
+    getItem(StorageKeys.USERNAME),
+    getItem(StorageKeys.EMAIL),
   ]);
-  return {
-    token: token[1],
-    refreshToken: refreshToken[1],
-    role: role[1],
-    username: username[1],
-    email: email[1],
-  };
+  return { token, refreshToken, role, username, email };
 };
 
 export const logout = async () => {
@@ -43,6 +35,7 @@ export const logout = async () => {
     StorageKeys.REFRESH_TOKEN,
     StorageKeys.ROLE,
     StorageKeys.USERNAME,
+    StorageKeys.EMAIL,
     StorageKeys.PROFILE_COMPLETED,
     StorageKeys.KYC_STATUS,
     StorageKeys.SERVICES,
