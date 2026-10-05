@@ -105,13 +105,10 @@ export default function LoginScreen() {
       });
 
       if (otp_required || !user.is_otp_verified) {
-        showPopup(
-          "info",
-          "Email verification required",
-          __DEV__ && debug_otp
-            ? `Please verify your email with the OTP code. Development OTP: ${debug_otp}`
-            : "Please verify your email before continuing."
-        );
+        router.replace({
+          pathname: "/otp",
+          params: __DEV__ && debug_otp ? { debugOtp: debug_otp } : {},
+        } as never);
         return;
       }
 

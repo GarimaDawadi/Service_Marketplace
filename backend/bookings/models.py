@@ -21,17 +21,13 @@ class ProjectBooking(models.Model):
             "PENDING_PROVIDER_RESPONSE",
             "Pending provider response",
         )
-        COUNTER_OFFERED = "COUNTER_OFFERED", "Counter offered"
-        AGREEMENT_REACHED = "AGREEMENT_REACHED", "Agreement reached"
+        COUNTER_OFFER = "COUNTER_OFFER", "Counter offer"
+        AGREEMENT = "AGREEMENT", "Agreement"
         PAYMENT_PENDING = "PAYMENT_PENDING", "Payment pending"
         PAYMENT_FAILED = "PAYMENT_FAILED", "Payment failed"
         CONFIRMED = "CONFIRMED", "Confirmed"
         IN_PROGRESS = "IN_PROGRESS", "In progress"
-        DELIVERABLE_SUBMITTED = (
-            "DELIVERABLE_SUBMITTED",
-            "Deliverable submitted",
-        )
-        CLIENT_REVIEWING = "CLIENT_REVIEWING", "Client reviewing"
+        DELIVERABLE_SENT = "DELIVERABLE_SENT", "Deliverable sent"
         REVISION_REQUESTED = "REVISION_REQUESTED", "Revision requested"
         COMPLETED = "COMPLETED", "Completed"
         REVIEWED = "REVIEWED", "Reviewed"
@@ -90,6 +86,10 @@ class ProjectBooking(models.Model):
     requirements = models.TextField(
         blank=True,
     )
+
+    description = models.TextField(blank=True)
+
+    rejection_reason = models.CharField(max_length=500, blank=True)
 
     proposed_price = models.DecimalField(
         max_digits=12,
@@ -258,6 +258,11 @@ class CounterOffer(models.Model):
         blank=True,
     )
 
+    scope = models.TextField(blank=True)
+    deadline = models.DateTimeField(null=True, blank=True)
+    revision_limit = models.PositiveSmallIntegerField(null=True, blank=True)
+    additional_requirements = models.TextField(blank=True)
+
     status = models.CharField(
         max_length=20,
         choices=Status.choices,
@@ -286,6 +291,8 @@ class Milestone(models.Model):
         max_length=200,
     )
 
+    description = models.TextField(blank=True)
+
     amount = models.DecimalField(
         max_digits=12,
         decimal_places=2,
@@ -296,9 +303,12 @@ class Milestone(models.Model):
         blank=True,
     )
 
-    is_completed = models.BooleanField(
-        default=False,
-    )
+    class Status(models.TextChoices):
+        PENDING = "PENDING", "Pending"
+        COMPLETED = "COMPLETED", "Completed"
+
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)
+    is_completed = models.BooleanField(default=False)
 
     sort_order = models.PositiveSmallIntegerField(
         default=0,
@@ -339,6 +349,8 @@ class Deliverable(models.Model):
     note = models.TextField(
         blank=True,
     )
+
+    description = models.TextField(blank=True)
 
     created_at = models.DateTimeField(
         auto_now_add=True,

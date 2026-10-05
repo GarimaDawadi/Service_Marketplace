@@ -5,15 +5,15 @@ import AuthGuard from "../src/auth/AuthGuard";
 import Navbar from "../src/components/Navbar";
 import { BACKGROUND } from "../src/theme/colors";
 
-export default function Layout() {
+export default function RootLayout() {
   return (
     <SafeAreaProvider>
       <AuthGuard>
         <View style={{ flex: 1, backgroundColor: BACKGROUND }}>
-          <Navbar />
           <View style={{ flex: 1 }}>
-            <Stack screenOptions={{ headerShown: false }} initialRouteName="index" />
+            <Stack screenOptions={{ headerShown: false, animation: "fade" }} />
           </View>
+          <Navbar />
         </View>
       </AuthGuard>
     </SafeAreaProvider>

@@ -1,9 +1,8 @@
 from django.urls import include, path
 
 from rest_framework.routers import DefaultRouter
-from rest_framework_simplejwt.views import TokenRefreshView
-
 from .views import (
+    AccountTokenRefreshView,
     ChangePasswordView,
     ClientProfileView,
     FreelancerProfileView,
@@ -12,6 +11,8 @@ from .views import (
     LoginView,
     OTPRequestView,
     OTPVerifyView,
+    PasswordResetConfirmView,
+    PasswordResetRequestView,
     ProfilePhotoDeleteView,
     ProfilePhotoView,
     ProfileUpdateView,
@@ -63,7 +64,7 @@ urlpatterns = [
 
     path(
         "token/refresh/",
-        TokenRefreshView.as_view(),
+        AccountTokenRefreshView.as_view(),
         name="token-refresh",
     ),
 
@@ -98,6 +99,16 @@ urlpatterns = [
         "password/change/",
         ChangePasswordView.as_view(),
         name="password-change",
+    ),
+    path(
+        "password/reset/request/",
+        PasswordResetRequestView.as_view(),
+        name="password-reset-request",
+    ),
+    path(
+        "password/reset/",
+        PasswordResetConfirmView.as_view(),
+        name="password-reset-confirm",
     ),
 
     # Role-specific profiles

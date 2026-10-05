@@ -6,6 +6,7 @@ class Payment(models.Model):
         PENDING = "PENDING"
         SUCCESS = "SUCCESS"
         FAILED = "FAILED"
+        CANCELLED = "CANCELLED"
         REFUNDED = "REFUNDED"
     class Gateway(models.TextChoices):
         ESEWA = "ESEWA"

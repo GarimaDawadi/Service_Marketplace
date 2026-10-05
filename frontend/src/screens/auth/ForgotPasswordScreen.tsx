@@ -7,7 +7,7 @@ import {
   ScrollView,
   ActivityIndicator,
 } from "react-native";
-import { useRouter, useLocalSearchParams } from "expo-router";
+import { useRouter } from "expo-router";
 import { authApi } from "../../services/api/authApi";
 import { getApiErrorMessage } from "../../services/api/client";
 import AuthLayout, { authFormStyles as s } from "../../components/AuthLayout";
@@ -50,8 +50,11 @@ export default function ForgotPasswordScreen() {
       show(
         "success",
         "Check your email",
-        res.message || "If registered, you will receive a reset link and token.",
-        () => router.push({ pathname: "/reset-password", params: { email: trimmed } })
+        __DEV__ && res.debug_otp ? `Development reset code: ${res.debug_otp}` : res.message,
+        () => router.push({
+          pathname: "/reset-password",
+          params: { email: trimmed, ...( __DEV__ && res.debug_otp ? { code: res.debug_otp } : {}) },
+        } as never)
       );
     } catch (err) {
       show("error", "Failed", getApiErrorMessage(err, "Could not send reset email."));
@@ -63,7 +66,7 @@ export default function ForgotPasswordScreen() {
   return (
     <AuthLayout
       title="Forgot password"
-      subtitle="Enter your email. We will send a reset link and token."
+      subtitle="Enter your email. We will send a one-time code to verify your account."
       showBack
     >
       <ScrollView keyboardShouldPersistTaps="handled">

@@ -13,7 +13,7 @@ import Animated, { FadeInDown, FadeInRight } from "react-native-reanimated";
 import { kycApi } from "../../services/api/kycApi";
 import { servicesApi } from "../../services/api/servicesApi";
 import { bookingsApi } from "../../services/api/bookingsApi";
-import { getAuth } from "../../auth/auth";
+import { getApiErrorMessage } from "../../services/api/client";
 import {
   PRIMARY,
   PROVIDER_BACKGROUND,
@@ -26,44 +26,36 @@ import {
 export default function ProviderHomeScreen() {
   const router = useRouter();
 
-  const [kycStatus, setKycStatus] = useState("pending");
+  const [kycStatus, setKycStatus] = useState("NOT_SUBMITTED");
   const [verified, setVerified] = useState(false);
   const [serviceCount, setServiceCount] = useState(0);
   const [bookingCount, setBookingCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [loadError, setLoadError] = useState("");
 
   const load = useCallback(async () => {
+    setLoadError("");
     try {
-      const auth = await getAuth();
-
-      const [profile, services, bookings] = await Promise.all([
-        kycApi
-          .getProfile()
-          .catch(() => ({
-            kyc_status: "pending",
-            is_verified: false,
-          })),
-
-        servicesApi.list().catch(() => []),
-
-        bookingsApi.listBookings().catch(() => []),
+      const [profileResult, servicesResult, bookingsResult] = await Promise.allSettled([
+        kycApi.getProfile(),
+        servicesApi.list({ mine: true }),
+        bookingsApi.listBookings(),
       ]);
-
-      setKycStatus(profile.kyc_status || "pending");
-      setVerified(!!profile.is_verified);
-
-      const mine = services.filter(
-        (s) => s.provider_name === auth.username
-      );
-
-      setServiceCount(mine.length);
-
-      const active = bookings.filter(
-        (b) => b.status !== "cancelled"
-      );
-
-      setBookingCount(active.length);
+      if (profileResult.status === "fulfilled") {
+        setKycStatus((profileResult.value.kyc_status || "NOT_SUBMITTED").toUpperCase());
+        setVerified(!!profileResult.value.is_verified);
+      } else {
+        setKycStatus("NOT_SUBMITTED");
+        setVerified(false);
+      }
+      if (servicesResult.status === "fulfilled") setServiceCount(servicesResult.value.length);
+      else setServiceCount(0);
+      if (bookingsResult.status === "fulfilled") {
+        setBookingCount(bookingsResult.value.filter((booking) => !["CANCELLED", "REJECTED", "EXPIRED"].includes(booking.status)).length);
+      } else setBookingCount(0);
+      const failed = [profileResult, servicesResult, bookingsResult].find((result) => result.status === "rejected");
+      if (failed?.status === "rejected") setLoadError(getApiErrorMessage(failed.reason, "Could not load all dashboard data."));
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -84,23 +76,22 @@ export default function ProviderHomeScreen() {
   };
 
   const getKycButtonText = () => {
-    if (verified || kycStatus === "approved") {
+    if (verified || kycStatus === "APPROVED") {
       return "KYC Approved ✓";
     }
 
-    if (kycStatus === "submitted") {
+    if (kycStatus === "PENDING") {
       return "View / Update KYC";
     }
 
-    if (kycStatus === "rejected") {
+    if (kycStatus === "REJECTED") {
       return "Resubmit KYC";
     }
 
     return "Submit KYC";
   };
 
-  const isKycApproved =
-    verified || kycStatus === "approved";
+  const isKycApproved = verified || kycStatus === "APPROVED";
 
   return (
     <View style={styles.screen}>
@@ -127,12 +118,12 @@ export default function ProviderHomeScreen() {
           <View style={styles.kycBadge}>
             <Text style={styles.kycText}>
               KYC: {kycStatus}
-              {kycStatus === "submitted"
-                ? " · awaiting approval"
-                : ""}
+              {kycStatus === "PENDING" ? " · awaiting approval" : ""}
             </Text>
           </View>
         </Animated.View>
+
+        {loadError ? <TouchableOpacity style={styles.errorBox} onPress={refresh}><Text style={styles.errorText}>{loadError}</Text><Text style={styles.retryText}>Tap to retry</Text></TouchableOpacity> : null}
 
         {/* Stats */}
         {loading ? (
@@ -229,7 +220,7 @@ export default function ProviderHomeScreen() {
             }
           >
             <Text style={styles.outlineText}>
-              View & cancel bookings
+              Manage booking requests
             </Text>
           </TouchableOpacity>
         </Animated.View>
@@ -279,6 +270,9 @@ const styles = StyleSheet.create({
     fontSize: 13,
   },
 
+  errorBox: { backgroundColor: "#FEF2F2", borderColor: "#FECACA", borderWidth: 1, padding: 12, borderRadius: 8, marginBottom: 14 },
+  errorText: { color: "#B91C1C", fontSize: 12 },
+  retryText: { color: PRIMARY, fontWeight: "800", marginTop: 5 },
   statsRow: {
     flexDirection: "row",
     marginBottom: 24,

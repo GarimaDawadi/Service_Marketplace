@@ -33,6 +33,11 @@ class Service(models.Model):
         REMOTE = "REMOTE", "Remote"
         LOCAL = "LOCAL", "Local"
         BOTH = "BOTH", "Both"
+
+    class Status(models.TextChoices):
+        DRAFT = "DRAFT", "Draft"
+        PUBLISHED = "PUBLISHED", "Published"
+        INACTIVE = "INACTIVE", "Inactive"
     freelancer = models.ForeignKey(
         "accounts.FreelancerProfile", on_delete=models.CASCADE, related_name="services"
     )
@@ -52,11 +57,26 @@ class Service(models.Model):
     skills = models.ManyToManyField(Skill, blank=True, related_name="services")
     location = models.CharField(max_length=255, blank=True)
     travel_radius_km = models.PositiveIntegerField(null=True, blank=True)
-    is_active = models.BooleanField(default=True)
+    status = models.CharField(max_length=16, choices=Status.choices, default=Status.DRAFT)
+    # Kept for compatibility with the first API version; status is canonical.
+    is_active = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     class Meta:
         ordering = ["-created_at"]
+    def save(self, *args, **kwargs):
+        if self.status == self.Status.PUBLISHED:
+            from accounts.models import KYCVerification
+            approved = KYCVerification.objects.filter(
+                freelancer_id=self.freelancer_id,
+                status=KYCVerification.Status.APPROVED,
+            ).exists()
+            if not approved:
+                from django.core.exceptions import ValidationError
+                raise ValidationError("Provider KYC approval is required before publishing services.")
+        self.is_active = self.status == self.Status.PUBLISHED
+        super().save(*args, **kwargs)
+
     def __str__(self):
         return self.title
 class ServiceImage(models.Model):

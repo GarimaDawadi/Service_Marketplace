@@ -1,3 +1,6 @@
+import os
+import uuid
+
 from django.contrib.auth.models import AbstractUser
 from django.db import models
 class User(AbstractUser):
@@ -51,6 +54,13 @@ class FreelancerProfile(models.Model):
         return bool(kyc and kyc.status == KYCVerification.Status.APPROVED)
     def __str__(self):
         return self.professional_title or self.user.email
+def kyc_document_upload_path(instance, filename):
+    extension = os.path.splitext(filename)[1].lower()
+    if len(extension) > 12 or not extension[1:].isalnum():
+        extension = ""
+    return f"kyc/{uuid.uuid4().hex}{extension}"
+
+
 class KYCVerification(models.Model):
     class Status(models.TextChoices):
         PENDING = "PENDING", "Pending"
@@ -62,8 +72,8 @@ class KYCVerification(models.Model):
     legal_name = models.CharField(max_length=160)
     document_type = models.CharField(max_length=80)
     document_number = models.CharField(max_length=80)
-    document_front = models.FileField(upload_to="kyc/")
-    document_back = models.FileField(upload_to="kyc/", blank=True, null=True)
+    document_front = models.FileField(upload_to=kyc_document_upload_path)
+    document_back = models.FileField(upload_to=kyc_document_upload_path, blank=True, null=True)
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)
     rejection_reason = models.TextField(blank=True)
     submitted_at = models.DateTimeField(auto_now_add=True)

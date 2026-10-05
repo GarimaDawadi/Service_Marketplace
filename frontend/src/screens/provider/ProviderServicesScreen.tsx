@@ -13,12 +13,10 @@ import { useRouter } from "expo-router";
 import * as ImagePicker from "expo-image-picker";
 import Animated, { FadeInDown } from "react-native-reanimated";
 import FeedbackModal, { type FeedbackType } from "../../components/FeedbackModal";
-import { api, getApiErrorMessage } from "../../services/api/client";
+import { getApiErrorMessage } from "../../services/api/client";
 import { kycApi, type ProviderProfile } from "../../services/api/kycApi";
-import { servicesApi, type ServiceItem } from "../../services/api/servicesApi";
-import { uploadImage } from "../../services/api/mediaApi";
+import { servicesApi, type CategoryItem, type ServiceItem } from "../../services/api/servicesApi";
 import { SERVICE_CITIES } from "../../utils/geo";
-import { getAuth } from "../../auth/auth";
 import {
   PRIMARY,
   BACKGROUND,
@@ -37,6 +35,11 @@ export default function ProviderServicesScreen() {
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [price, setPrice] = useState("");
+  const [categories, setCategories] = useState<CategoryItem[]>([]);
+  const [categoryId, setCategoryId] = useState<number | null>(null);
+  const [categoriesLoading, setCategoriesLoading] = useState(true);
+  const [categoriesError, setCategoriesError] = useState("");
+  const [serviceMode, setServiceMode] = useState<"REMOTE" | "LOCAL" | "BOTH">("BOTH");
   const [locationCity, setLocationCity] = useState("Kathmandu");
   const [photoUris, setPhotoUris] = useState<
     { uri: string; mimeType?: string; fileName: string; base64?: string | null }[]
@@ -44,6 +47,7 @@ export default function ProviderServicesScreen() {
   const [loading, setLoading] = useState(false);
   const [myServices, setMyServices] = useState<ServiceItem[]>([]);
   const [servicesLoading, setServicesLoading] = useState(false);
+  const [servicesError, setServicesError] = useState("");
   const [popup, setPopup] = useState({
     visible: false,
     type: "info" as FeedbackType,
@@ -62,23 +66,39 @@ export default function ProviderServicesScreen() {
 
   const loadMyServices = async () => {
     setServicesLoading(true);
+    setServicesError("");
     try {
-      const auth = await getAuth();
-      const all = await servicesApi.list();
-      const mine = all.filter((s) => s.provider_name === auth.username);
-      setMyServices(mine);
-    } catch {
+      setMyServices(await servicesApi.list({ mine: true }));
+    } catch (error) {
       setMyServices([]);
+      setServicesError(getApiErrorMessage(error, "Could not load your listings."));
     } finally {
       setServicesLoading(false);
     }
   };
 
+  const loadCategories = async () => {
+    setCategoriesLoading(true);
+    setCategoriesError("");
+    try {
+      const items = await servicesApi.listCategories();
+      setCategories(items);
+      setCategoryId((current) => current ?? items[0]?.id ?? null);
+    } catch (error) {
+      setCategories([]);
+      setCategoriesError(getApiErrorMessage(error, "Could not load categories."));
+    } finally {
+      setCategoriesLoading(false);
+    }
+  };
+
   useEffect(() => {
-    loadMyServices();
+    void loadMyServices();
+    void loadCategories();
   }, []);
 
-  const kycVerified = Boolean(profile?.is_verified && profile?.kyc_status === "approved");
+  const kycStatus = (profile?.kyc_status || "NOT_SUBMITTED").toUpperCase();
+  const kycVerified = Boolean(profile?.is_verified && kycStatus === "APPROVED");
 
   const showPopup = (
     type: FeedbackType,
@@ -121,6 +141,16 @@ export default function ProviderServicesScreen() {
     }
   };
 
+  const toggleServiceStatus = async (service: ServiceItem) => {
+    try {
+      const status = service.status === "PUBLISHED" ? "INACTIVE" : "PUBLISHED";
+      await servicesApi.update(service.id, { status });
+      await loadMyServices();
+    } catch (error) {
+      showPopup("error", "Listing update failed", getApiErrorMessage(error, "Could not update this listing."));
+    }
+  };
+
   const publish = async () => {
     if (!kycVerified) {
       showPopup(
@@ -130,41 +160,36 @@ export default function ProviderServicesScreen() {
       );
       return;
     }
-    if (!title.trim() || !description.trim() || !price.trim()) {
-      showPopup("error", "Missing fields", "Fill in title, description, and price.");
+    if (!categoryId || !title.trim() || !description.trim() || !price.trim()) {
+      showPopup("error", "Missing fields", "Choose a category and fill in title, description, and price.");
       return;
     }
-    if (photoUris.length === 0) {
-      showPopup("error", "Photos required", "Upload at least one photo of your service.");
+    if (!Number.isFinite(Number(price)) || Number(price) <= 0) {
+      showPopup("error", "Invalid price", "Enter a price greater than zero.");
       return;
     }
 
     setLoading(true);
     try {
-      const uploaded = await Promise.all(
-        photoUris.map((photo, i) =>
-          uploadImage(
-            photo.uri,
-            photo.fileName || "service-" + i + ".jpg",
-            photo.mimeType,
-            "service",
-            photo.base64
-          )
-        )
-      );
-      await api.post("services/", {
+      const service = await servicesApi.create({
+        category: categoryId,
         title: title.trim(),
         description: description.trim(),
-        price: price.trim(),
+        starting_price: Number(price).toFixed(2),
+        status: "PUBLISHED",
+        service_mode: serviceMode,
         location: locationCity,
-        image_urls: uploaded.map((u) => u.url),
       });
+      const imageResults = await Promise.allSettled(photoUris.map((photo, index) =>
+        servicesApi.uploadImage(service.id, photo.uri, photo.fileName || `service-${index}.jpg`, photo.mimeType || "image/jpeg")
+      ));
+      const failedImages = imageResults.filter((result) => result.status === "rejected").length;
       setTitle("");
       setDescription("");
       setPrice("");
       setPhotoUris([]);
       await loadMyServices();
-      showPopup("success", "Published", "Your service is now active on the marketplace.");
+      showPopup("success", "Service published", failedImages ? "Your service is live, but one or more images could not be uploaded." : "Your service is now active on the marketplace.");
     } catch (err) {
       showPopup("error", "Publish failed", getApiErrorMessage(err, "Could not publish service."));
     } finally {
@@ -185,25 +210,18 @@ export default function ProviderServicesScreen() {
       <ScrollView style={styles.screen} contentContainerStyle={styles.content}>
         <Animated.View entering={FadeInDown.duration(400)} style={styles.kycBlock}>
           <Text style={styles.kycIcon}>⏳</Text>
-          <Text style={styles.kycTitle}>KYC pending</Text>
+          <Text style={styles.kycTitle}>{kycStatus === "REJECTED" ? "KYC requires changes" : kycStatus === "NOT_SUBMITTED" ? "Complete KYC to publish" : "KYC pending review"}</Text>
           <Text style={styles.kycBody}>
             You can only publish services after your KYC is verified by an admin.
-            {profile?.kyc_status === "submitted"
+            {kycStatus === "PENDING"
               ? " Your documents are under review."
-              : profile?.kyc_status === "rejected"
-                ? " Your KYC was rejected — contact support or resubmit."
+              : kycStatus === "REJECTED"
+                ? " Your KYC was rejected — review the reason and resubmit."
                 : " Complete KYC submission first."}
           </Text>
-          <Text style={styles.kycStatus}>Status: {profile?.kyc_status ?? "pending"}</Text>
-          <TouchableOpacity
-            style={styles.btn}
-            onPress={() =>
-              router.push(profile?.kyc_status === "pending" ? "/provider-kyc" : "/provider-home")
-            }
-          >
-            <Text style={styles.btnText}>
-              {profile?.kyc_status === "pending" ? "Complete KYC" : "Back to dashboard"}
-            </Text>
+          <Text style={styles.kycStatus}>Status: {kycStatus.replace(/_/g, " ")}</Text>
+          <TouchableOpacity style={styles.btn} onPress={() => router.push("/provider-kyc")}>
+            <Text style={styles.btnText}>{kycStatus === "NOT_SUBMITTED" || kycStatus === "REJECTED" ? "Complete KYC" : "View KYC status"}</Text>
           </TouchableOpacity>
         </Animated.View>
         <FeedbackModal
@@ -222,9 +240,31 @@ export default function ProviderServicesScreen() {
       <Animated.View entering={FadeInDown.springify()} style={styles.card}>
         <Text style={styles.step}>Publish a service</Text>
         <Text style={styles.title}>List on the marketplace</Text>
-        <Text style={styles.sub}>Upload your own photos. Customers only see provider images.</Text>
+        <Text style={styles.sub}>Create a listing in a category. You can publish only after KYC approval.</Text>
 
-        <Text style={styles.label}>Photos (1–10 required)</Text>
+        <Text style={styles.label}>Category</Text>
+        {categoriesLoading ? <ActivityIndicator color={PRIMARY} style={{ marginVertical: 10 }} /> : categoriesError ? (
+          <View><Text style={styles.formError}>{categoriesError}</Text><TouchableOpacity onPress={() => void loadCategories()}><Text style={styles.listingActionText}>Retry categories</Text></TouchableOpacity></View>
+        ) : categories.length === 0 ? (
+          <Text style={styles.activeEmpty}>No active service categories are available yet.</Text>
+        ) : (
+          <View style={styles.chips}>
+            {categories.map((category) => (
+              <TouchableOpacity key={category.id} onPress={() => setCategoryId(category.id)} style={[styles.chip, categoryId === category.id && styles.chipActive]}>
+                <Text style={[styles.chipText, categoryId === category.id && styles.chipTextActive]}>{category.name}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        )}
+        <Text style={styles.label}>Service mode</Text>
+        <View style={styles.chips}>
+          {(["REMOTE", "LOCAL", "BOTH"] as const).map((value) => (
+            <TouchableOpacity key={value} onPress={() => setServiceMode(value)} style={[styles.chip, serviceMode === value && styles.chipActive]}>
+              <Text style={[styles.chipText, serviceMode === value && styles.chipTextActive]}>{value === "BOTH" ? "Remote and in person" : value === "LOCAL" ? "In person" : "Remote"}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+        <Text style={styles.label}>Photos (optional, up to 10)</Text>
         <View style={styles.photoRow}>
           {photoUris.map((photo) => (
             <Image key={photo.uri} source={{ uri: photo.uri }} style={styles.thumb} />
@@ -286,6 +326,8 @@ export default function ProviderServicesScreen() {
           <Text style={styles.activeTitle}>Your active listings</Text>
           {servicesLoading ? (
             <ActivityIndicator color={PRIMARY} style={{ marginTop: 10 }} />
+          ) : servicesError ? (
+            <View><Text style={styles.formError}>{servicesError}</Text><TouchableOpacity onPress={() => void loadMyServices()}><Text style={styles.listingActionText}>Retry listings</Text></TouchableOpacity></View>
           ) : myServices.length === 0 ? (
             <Text style={styles.activeEmpty}>No active listings yet.</Text>
           ) : (
@@ -293,8 +335,11 @@ export default function ProviderServicesScreen() {
               <View key={svc.id} style={styles.activeCard}>
                 <Text style={styles.activeName}>{svc.title}</Text>
                 <Text style={styles.activeMeta}>
-                  Rs {parseFloat(svc.price).toFixed(0)} · {svc.location}
+                  Rs {parseFloat(svc.price).toFixed(0)} · {svc.location || "Location not set"} · {svc.status || "DRAFT"}
                 </Text>
+                <TouchableOpacity style={styles.listingAction} onPress={() => void toggleServiceStatus(svc)}>
+                  <Text style={styles.listingActionText}>{svc.status === "PUBLISHED" ? "Deactivate listing" : "Publish listing"}</Text>
+                </TouchableOpacity>
               </View>
             ))
           )}
@@ -394,6 +439,7 @@ const styles = StyleSheet.create({
   },
   activeTitle: { fontSize: 16, fontWeight: "700", color: TEXT, marginBottom: 10 },
   activeEmpty: { color: TEXT_MUTED, fontSize: 14 },
+  formError: { color: "#B91C1C", fontSize: 12, marginVertical: 7 },
   activeCard: {
     borderWidth: 1,
     borderColor: BORDER,
@@ -404,4 +450,6 @@ const styles = StyleSheet.create({
   },
   activeName: { fontSize: 14, fontWeight: "700", color: TEXT },
   activeMeta: { marginTop: 4, fontSize: 13, color: TEXT_MUTED },
+  listingAction: { alignSelf: "flex-start", marginTop: 10, paddingVertical: 6, paddingHorizontal: 10, borderRadius: 6, borderWidth: 1, borderColor: BORDER },
+  listingActionText: { color: PRIMARY, fontWeight: "700", fontSize: 12 },
 });

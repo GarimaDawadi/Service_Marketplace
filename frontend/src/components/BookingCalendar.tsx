@@ -1,11 +1,12 @@
 import React, { useMemo } from "react";
-import { View, Text, TouchableOpacity, StyleSheet } from "react-native";
-import type { AvailabilitySlot } from "../services/api/bookingsApi";
-import { PRIMARY, CARD, TEXT, TEXT_MUTED, BORDER, SUCCESS } from "../theme/colors";
+import { StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import type { ProviderAvailability } from "../services/api/servicesApi";
+import { BORDER, CARD, PRIMARY, SUCCESS, TEXT, TEXT_MUTED } from "../theme/colors";
 
+type AvailabilitySlot = ProviderAvailability & { date: string; status: "available" | "blocked" };
 type Props = {
   month: Date;
-  slots: AvailabilitySlot[];
+  slots: ProviderAvailability[];
   selectedDate: string | null;
   onSelectDate: (date: string) => void;
   onChangeMonth: (delta: number) => void;
@@ -17,193 +18,56 @@ type Props = {
 
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
-export default function BookingCalendar({
-  month,
-  slots,
-  selectedDate,
-  selectedSlotId,
-  onSelectDate,
-  onChangeMonth,
-  readOnly,
-  bookingMode,
-  onToggleSlot,
-}: Props) {
+export default function BookingCalendar({ month, slots, selectedDate, selectedSlotId, onSelectDate, onChangeMonth, readOnly, bookingMode, onToggleSlot }: Props) {
   const year = month.getFullYear();
-  const mon = month.getMonth();
+  const monthIndex = month.getMonth();
   const label = month.toLocaleString("default", { month: "long", year: "numeric" });
-
-  const slotsByDate = useMemo(() => {
+  const daysInMonth = new Date(year, monthIndex + 1, 0).getDate();
+  const dateSlots = useMemo(() => {
     const map: Record<string, AvailabilitySlot[]> = {};
-    slots.forEach((s) => {
-      (map[s.date] ||= []).push(s);
+    slots.forEach((entry) => {
+      if (entry.specific_date) {
+        (map[entry.specific_date] ||= []).push({ ...entry, date: entry.specific_date, status: entry.is_blocked ? "blocked" : "available" });
+        return;
+      }
+      if (entry.weekday == null) return;
+      for (let day = 1; day <= daysInMonth; day++) {
+        const date = `${year}-${String(monthIndex + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+        const weekday = (new Date(`${date}T12:00:00`).getDay() + 6) % 7;
+        if (weekday === entry.weekday) (map[date] ||= []).push({ ...entry, date, status: entry.is_blocked ? "blocked" : "available" });
+      }
     });
     return map;
-  }, [slots]);
-
-  const days = useMemo(() => {
-    const first = new Date(year, mon, 1);
-    const startPad = first.getDay();
-    const count = new Date(year, mon + 1, 0).getDate();
-    const cells: (number | null)[] = [];
-    for (let i = 0; i < startPad; i++) cells.push(null);
-    for (let d = 1; d <= count; d++) cells.push(d);
-    return cells;
-  }, [year, mon]);
-
-  const dateStr = (day: number) =>
-    `${year}-${String(mon + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
-
-  const dayStatus = (day: number) => {
-    const ds = dateStr(day);
-    const daySlots = slotsByDate[ds] || [];
-    if (daySlots.some((s) => s.status === "available")) return "available";
-    if (daySlots.some((s) => s.status === "booked")) return "booked";
-    if (daySlots.some((s) => s.status === "blocked")) return "blocked";
-    return "none";
-  };
-
-  const selectedSlots = selectedDate ? slotsByDate[selectedDate] || [] : [];
+  }, [daysInMonth, monthIndex, slots, year]);
+  const leadingSpaces = new Date(year, monthIndex, 1).getDay();
+  const dates: (number | null)[] = [...Array.from({ length: leadingSpaces }, () => null), ...Array.from({ length: daysInMonth }, (_, i) => i + 1)];
+  const selectedSlots = selectedDate ? dateSlots[selectedDate] || [] : [];
+  const isAvailableDay = (day: number) => (dateSlots[`${year}-${String(monthIndex + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`] || []).some((slot) => slot.status === "available");
 
   return (
     <View style={styles.wrap}>
-      <View style={styles.monthRow}>
-        <TouchableOpacity onPress={() => onChangeMonth(-1)}>
-          <Text style={styles.nav}>‹</Text>
-        </TouchableOpacity>
-        <Text style={styles.monthLabel}>{label}</Text>
-        <TouchableOpacity onPress={() => onChangeMonth(1)}>
-          <Text style={styles.nav}>›</Text>
-        </TouchableOpacity>
-      </View>
-
-      <View style={styles.weekRow}>
-        {WEEKDAYS.map((w) => (
-          <Text key={w} style={styles.weekday}>
-            {w}
-          </Text>
-        ))}
-      </View>
-
-      <View style={styles.grid}>
-        {days.map((day, i) => {
-          if (day === null) return <View key={`e-${i}`} style={styles.cell} />;
-          const ds = dateStr(day);
-          const st = dayStatus(day);
-          const selected = selectedDate === ds;
-          return (
-            <TouchableOpacity
-              key={ds}
-              style={[
-                styles.cell,
-                st === "available" && styles.cellAvailable,
-                st === "booked" && styles.cellBooked,
-                st === "blocked" && styles.cellBlocked,
-                selected && styles.cellSelected,
-              ]}
-              onPress={() => onSelectDate(ds)}
-            >
-              <Text style={[styles.dayNum, selected && styles.daySelected]}>{day}</Text>
-            </TouchableOpacity>
-          );
-        })}
-      </View>
-
-      <View style={styles.legend}>
-        <LegendDot color={SUCCESS} label="Available" />
-        <LegendDot color="#CBD5E1" label="Booked" />
-        <LegendDot color="#FCA5A5" label="Blocked" />
-      </View>
-
-      {selectedDate ? (
-        <View style={styles.slots}>
-          <Text style={styles.slotsTitle}>Times on {selectedDate}</Text>
-          {selectedSlots.length === 0 ? (
-            <Text style={styles.noSlots}>No slots — provider can add availability</Text>
-          ) : (
-            selectedSlots.map((slot) => {
-              const selectable =
-                !bookingMode || (!readOnly && slot.status === "available");
-              return (
-              <TouchableOpacity
-                key={slot.id}
-                disabled={!selectable && bookingMode}
-                onPress={() => {
-                  if (bookingMode && slot.status !== "available") return;
-                  onToggleSlot?.(slot);
-                }}
-                style={[
-                  styles.slotRow,
-                  slot.status === "available" && styles.slotAvail,
-                  slot.status === "booked" && styles.slotBooked,
-                  slot.status === "blocked" && styles.slotBlocked,
-                  selectedSlotId === slot.id && styles.slotSelected,
-                ]}
-              >
-                <Text style={styles.slotTime}>
-                  {slot.start_time.slice(0, 5)} – {slot.end_time.slice(0, 5)}
-                </Text>
-                <Text style={styles.slotStatus}>{slot.status}</Text>
-              </TouchableOpacity>
-              );
-            })
-          )}
-        </View>
-      ) : null}
+      <View style={styles.monthRow}><TouchableOpacity onPress={() => onChangeMonth(-1)}><Text style={styles.nav}>‹</Text></TouchableOpacity><Text style={styles.monthLabel}>{label}</Text><TouchableOpacity onPress={() => onChangeMonth(1)}><Text style={styles.nav}>›</Text></TouchableOpacity></View>
+      <View style={styles.weekRow}>{WEEKDAYS.map((day) => <Text key={day} style={styles.weekday}>{day}</Text>)}</View>
+      <View style={styles.grid}>{dates.map((day, index) => {
+        if (day == null) return <View key={`blank-${index}`} style={styles.cell} />;
+        const date = `${year}-${String(monthIndex + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+        const selected = selectedDate === date;
+        return <TouchableOpacity key={date} style={[styles.cell, isAvailableDay(day) && styles.availableDay, selected && styles.selectedDay]} onPress={() => onSelectDate(date)}><Text style={[styles.dayNum, selected && styles.selectedText]}>{day}</Text></TouchableOpacity>;
+      })}</View>
+      <View style={styles.legend}><Legend color={SUCCESS} label="Available" /><Legend color="#FCA5A5" label="Blocked" /></View>
+      {selectedDate ? <View style={styles.slots}><Text style={styles.slotsTitle}>Times on {selectedDate}</Text>{selectedSlots.length === 0 ? <Text style={styles.noSlots}>No provider availability for this date.</Text> : selectedSlots.map((slot, index) => {
+        const selectable = slot.status === "available" && !readOnly;
+        return <TouchableOpacity key={`${slot.id}-${index}`} disabled={bookingMode && !selectable} onPress={() => onToggleSlot?.(slot)} style={[styles.slotRow, slot.status === "blocked" && styles.blocked, selectedSlotId === slot.id && styles.slotSelected]}><Text style={styles.slotTime}>{slot.start_time.slice(0, 5)} – {slot.end_time.slice(0, 5)}</Text><Text style={styles.slotStatus}>{slot.is_blocked ? "blocked" : "available"}</Text></TouchableOpacity>;
+      })}</View> : null}
     </View>
   );
 }
-
-function LegendDot({ color, label }: { color: string; label: string }) {
-  return (
-    <View style={styles.legendItem}>
-      <View style={[styles.dot, { backgroundColor: color }]} />
-      <Text style={styles.legendText}>{label}</Text>
-    </View>
-  );
-}
-
+function Legend({ color, label }: { color: string; label: string }) { return <View style={styles.legendItem}><View style={[styles.dot, { backgroundColor: color }]} /><Text style={styles.legendText}>{label}</Text></View>; }
 const styles = StyleSheet.create({
-  wrap: { backgroundColor: CARD, borderRadius: 8, padding: 16, borderWidth: 1, borderColor: BORDER },
-  monthRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 12 },
-  nav: { fontSize: 28, color: PRIMARY, paddingHorizontal: 12 },
-  monthLabel: { fontSize: 17, fontWeight: "700", color: TEXT },
-  weekRow: { flexDirection: "row", marginBottom: 4 },
-  weekday: { flex: 1, textAlign: "center", fontSize: 11, color: TEXT_MUTED, fontWeight: "600" },
-  grid: { flexDirection: "row", flexWrap: "wrap" },
-  cell: {
-    width: "14.28%",
-    aspectRatio: 1,
-    alignItems: "center",
-    justifyContent: "center",
-    borderRadius: 6,
-    marginVertical: 2,
-  },
-  cellAvailable: { backgroundColor: "#ECFDF5" },
-  cellBooked: { backgroundColor: "#F1F5F9" },
-  cellBlocked: { backgroundColor: "#FEF2F2" },
-  cellSelected: { borderWidth: 2, borderColor: PRIMARY },
-  dayNum: { fontSize: 13, color: TEXT, fontWeight: "600" },
-  daySelected: { color: PRIMARY },
-  legend: { flexDirection: "row", justifyContent: "center", gap: 16, marginTop: 12 },
-  legendItem: { flexDirection: "row", alignItems: "center" },
-  dot: { width: 8, height: 8, borderRadius: 4, marginRight: 4 },
-  legendText: { fontSize: 11, color: TEXT_MUTED },
-  slots: { marginTop: 16 },
-  slotsTitle: { fontWeight: "700", color: TEXT, marginBottom: 8 },
-  noSlots: { color: TEXT_MUTED, fontSize: 13 },
-  slotRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    padding: 12,
-    borderRadius: 8,
-    marginBottom: 8,
-    borderWidth: 1,
-    borderColor: BORDER,
-  },
-  slotAvail: { backgroundColor: "#F0FDF4" },
-  slotBooked: { backgroundColor: "#F8FAFC", opacity: 0.8 },
-  slotBlocked: { backgroundColor: "#FEF2F2" },
-  slotSelected: { borderColor: PRIMARY, borderWidth: 2 },
-  slotTime: { fontWeight: "600", color: TEXT },
-  slotStatus: { textTransform: "capitalize", color: TEXT_MUTED, fontSize: 13 },
+  wrap: { backgroundColor: CARD, borderRadius: 10, padding: 15, borderWidth: 1, borderColor: BORDER },
+  monthRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }, nav: { color: PRIMARY, fontSize: 25, paddingHorizontal: 10 }, monthLabel: { color: TEXT, fontWeight: "800", fontSize: 16 },
+  weekRow: { flexDirection: "row" }, weekday: { flex: 1, textAlign: "center", color: TEXT_MUTED, fontSize: 10, fontWeight: "700" }, grid: { flexDirection: "row", flexWrap: "wrap", marginTop: 4 },
+  cell: { width: "14.28%", aspectRatio: 1, alignItems: "center", justifyContent: "center", borderRadius: 7 }, availableDay: { backgroundColor: "#ECFDF5" }, selectedDay: { borderWidth: 2, borderColor: PRIMARY }, dayNum: { color: TEXT, fontWeight: "700" }, selectedText: { color: PRIMARY },
+  legend: { flexDirection: "row", justifyContent: "center", gap: 15, marginTop: 10 }, legendItem: { flexDirection: "row", alignItems: "center" }, dot: { width: 8, height: 8, borderRadius: 4, marginRight: 4 }, legendText: { color: TEXT_MUTED, fontSize: 10 },
+  slots: { marginTop: 14 }, slotsTitle: { color: TEXT, fontWeight: "800", marginBottom: 8 }, noSlots: { color: TEXT_MUTED, fontSize: 12 }, slotRow: { flexDirection: "row", justifyContent: "space-between", padding: 11, borderRadius: 8, borderWidth: 1, borderColor: BORDER, marginBottom: 7 }, blocked: { backgroundColor: "#FEF2F2" }, slotSelected: { borderColor: PRIMARY, borderWidth: 2 }, slotTime: { color: TEXT, fontWeight: "700" }, slotStatus: { color: TEXT_MUTED, textTransform: "capitalize", fontSize: 12 },
 });

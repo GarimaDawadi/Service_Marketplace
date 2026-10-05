@@ -10,6 +10,7 @@ urlpatterns = [
     path("api/chat/", include("chats.urls")),
     path("api/payments/", include("payments.urls")),
     path("api/reviews/", include("reviews.urls")),
+    path("api/notifications/", include("notifications.urls")),
     path("api/platform/", include("platformcore.urls")),
 ]
 if settings.DEBUG:

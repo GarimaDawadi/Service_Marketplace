@@ -5,6 +5,7 @@ from rest_framework.response import Response
 
 from accounts.models import User
 from accounts.permissions import IsOTPVerified
+from notifications.services import notify
 
 from .models import Conversation, Message
 from .serializers import ConversationSerializer, MessageSerializer
@@ -25,9 +26,6 @@ def _participant_qs(user):
         "booking__service",
     )
 
-    if user.role == User.Role.ADMIN or user.is_staff:
-        return qs
-
     return qs.filter(
         booking__client__user=user
     ) | qs.filter(
@@ -42,9 +40,6 @@ def _is_participant(user, conversation):
         return True
 
     if booking.freelancer and booking.freelancer.user_id == user.id:
-        return True
-
-    if user.role == User.Role.ADMIN or user.is_staff:
         return True
 
     return False
@@ -165,6 +160,12 @@ class ConversationViewSet(viewsets.ReadOnlyModelViewSet):
             body=text,
             attachment=attachment,
         )
+        recipient = None
+        if booking.client.user_id == request.user.id and booking.freelancer_id:
+            recipient = booking.freelancer.user
+        elif booking.freelancer_id and booking.freelancer.user_id == request.user.id:
+            recipient = booking.client.user
+        notify(recipient, "New booking message", f"You received a new message about {booking.title}.", "MESSAGE_RECEIVED")
 
         serializer = MessageSerializer(
             message,
